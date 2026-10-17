@@ -272,6 +272,12 @@ NVN(nvnTextureReadTexels, void, const NVNtexture *t, const NVNtextureView *v, co
 NVN(nvnTextureReadTexelsStrided, void, const NVNtexture *t, const NVNtextureView *v, const NVNcopyRegion *r, void *dst, ptrdiff_t row, ptrdiff_t img) {
     read_texels(CTX(t), (const view_t *)v, r, dst, row, img);
 }
+NVN(nvnTextureWriteTexels,void,const NVNtexture* t,const NVNtextureView* v,const NVNcopyRegion* r,const void* source){
+    vkhost_write_texels(CTX(t),(const view_t*)v,r,source,0,0);
+}
+NVN(nvnTextureWriteTexelsStrided,void,const NVNtexture* t,const NVNtextureView* v,const NVNcopyRegion* r,const void* source,ptrdiff_t row,ptrdiff_t image){
+    vkhost_write_texels(CTX(t),(const view_t*)v,r,source,row,image);
+}
 NVN(nvnTextureInvalidateTexels, void, const NVNtexture *t, const NVNtextureView *v, const NVNcopyRegion *r) { (void)t; (void)v; (void)r; }
 
 // ---------- 采样器 ----------

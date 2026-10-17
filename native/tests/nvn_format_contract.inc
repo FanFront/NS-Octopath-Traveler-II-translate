@@ -35,13 +35,15 @@ extern "C" int vkhost_test_storage_formats(){
 extern "C" int vkhost_test_filter_formats(){
     drain_queues();std::lock_guard lock(state_mutex);flush_commands();batching=false;
     bool valid=true;
-    for(int f:{NVN_FORMAT_RG16,NVN_FORMAT_RG16F,NVN_FORMAT_RGBA8}){
+    for(int f:{NVN_FORMAT_RG16,NVN_FORMAT_RG16F,NVN_FORMAT_RGBA8,NVN_FORMAT_RG16SN,NVN_FORMAT_RGBA16SN}){
         tex_t tex{};tex.magic=MAGIC('T','E','X',0);tex.serial=nvn_new_serial();tex.d.width=tex.d.height=2;tex.d.depth=tex.d.levels=tex.d.samples=1;tex.d.target=NVN_TEXTURE_TARGET_2D;tex.d.format=f;
         for(unsigned i=0;i<4;i++)tex.d.swizzle[i]=i+2;nvn_tex_layout(&tex.d,&tex.L);
         std::array<uint16_t,8> normalized{0,0,65535,0,0,65535,65535,65535};
+        std::array<int16_t,8> snorm_rg{-32768,-32768,32767,-32768,-32768,32767,32767,32767};
+        std::array<int16_t,16> snorm_rgba{-32768,-32768,0,32767,32767,-32768,0,32767,-32768,32767,0,32767,32767,32767,0,32767};
         std::array<uint16_t,8> floating{0,0,0x3c00,0,0,0x3c00,0x3c00,0x3c00};
         std::array<uint8_t,16> rgba{0,0,0,255,255,0,0,255,0,255,0,255,255,255,0,255};
-        p_copy_b2t upload{};upload.tex=&tex;upload.r={0,0,0,2,2,1};upload.src=reinterpret_cast<uintptr_t>(f==NVN_FORMAT_RG16?static_cast<void*>(normalized.data()):f==NVN_FORMAT_RG16F?static_cast<void*>(floating.data()):static_cast<void*>(rgba.data()));copy_to_texture(upload);
+        p_copy_b2t upload{};upload.tex=&tex;upload.r={0,0,0,2,2,1};upload.src=reinterpret_cast<uintptr_t>(f==NVN_FORMAT_RG16SN?static_cast<void*>(snorm_rg.data()):f==NVN_FORMAT_RGBA16SN?static_cast<void*>(snorm_rgba.data()):f==NVN_FORMAT_RG16?static_cast<void*>(normalized.data()):f==NVN_FORMAT_RG16F?static_cast<void*>(floating.data()):static_cast<void*>(rgba.data()));copy_to_texture(upload);
         auto& img=image_for(tex);VkFormatProperties properties{};vkGetPhysicalDeviceFormatProperties(physical,img.format,&properties);
         VkSamplerCreateInfo sc{VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO};sc.magFilter=sc.minFilter=VK_FILTER_LINEAR;sc.mipmapMode=VK_SAMPLER_MIPMAP_MODE_NEAREST;sc.addressModeU=sc.addressModeV=sc.addressModeW=VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE;
         VkSampler sampler{};check(vkCreateSampler(device,&sc,nullptr,&sampler),"format oracle sampler");
@@ -50,7 +52,8 @@ extern "C" int vkhost_test_filter_formats(){
         resources->bindings.push_back({1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,1,VK_SHADER_STAGE_COMPUTE_BIT,nullptr});resources->writes.push_back({1,VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,0,1});resources->image_infos.push_back({sampler,make_view(tex,nullptr),VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL});resources->finish();
         VkComputePipelineCreateInfo ci{VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};ci.stage={VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};ci.stage.stage=VK_SHADER_STAGE_COMPUTE_BIT;ci.stage.module=clear_module(format_probe_comp);ci.stage.pName="main";ci.layout=resources->layout;
         auto pipeline=cached_pipeline(ci,resources->bindings);auto cmd=begin_commands();barrier(cmd,img,img.layout,VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);bind_pipeline(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,pipeline);bind_descriptors(cmd,VK_PIPELINE_BIND_POINT_COMPUTE,resources->layout,resources->set);vkCmdDispatch(cmd,1,1,1);finish_commands(cmd);flush_commands();resources.reset();
-        bool pass=std::abs(output[0]-.5f)<.003f&&std::abs(output[1]-.5f)<.003f&&output[2]==0&&output[3]==1;for(unsigned i=4;i<8;i++)pass&=output[i]==-12345;valid&=pass;
+        const float expected=f==NVN_FORMAT_RG16SN||f==NVN_FORMAT_RGBA16SN?0.f:.5f;
+        bool pass=std::abs(output[0]-expected)<.003f&&std::abs(output[1]-expected)<.003f&&output[2]==0&&output[3]==1;for(unsigned i=4;i<8;i++)pass&=output[i]==-12345;valid&=pass;
         printf("FILTER_FORMAT nvn=%d vk=%d supported=%u rgba=%g,%g,%g,%g pass=%u\n",f,img.format,bool(properties.optimalTilingFeatures&VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT),output[0],output[1],output[2],output[3],pass);
         vkDestroySampler(device,sampler,nullptr);destroy_image(tex.serial);
     }

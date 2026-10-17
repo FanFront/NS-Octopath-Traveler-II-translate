@@ -15,6 +15,10 @@ void crash_thread_init(void);
 void dm_thread_enter(uint64_t entry,uint64_t argument,uint64_t stack_top);
 uint64_t ot2_call_guest(const char* symbol,const uint64_t* arguments);
 uint64_t ot2_call_guest_address(uint64_t address,const uint64_t* arguments);
+uint64_t ot2_guest_symbol_address(const char* symbol);
+// Android library calls may exceed small SDK thread stacks. Preserve the
+// suspended guest stack for callbacks while running this service on its host stack.
+uint64_t ot2_call_on_host_stack(uint64_t (*function)(uint64_t*),uint64_t* arguments);
 void* ot2_native_gate(const char* name,void* function);
 #ifdef __cplusplus
 }

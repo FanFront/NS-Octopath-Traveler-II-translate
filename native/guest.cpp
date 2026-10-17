@@ -36,6 +36,7 @@ uint64_t ot2_guest_call(uintptr_t, GuestThread*, const uint64_t*, uintptr_t);
 void ot2_host_invoke(void*,uint64_t*,void*,uintptr_t);
 void ot2_abi_fixture();
 void ot2_native_entry();
+uint64_t ot2_host_stack_call(uint64_t (*)(uint64_t*),uint64_t*,uintptr_t);
 }
 namespace {
 struct Trap { uintptr_t pc; uint32_t instruction; const char* hook; uint64_t (*call)(uint64_t*)=nullptr; uint64_t hits=0; };
@@ -64,6 +65,8 @@ std::mutex setup_mutex;
 bool thread_system_ready=false;
 ot2::LoadedGame* active_game=nullptr;
 thread_local ucontext_t* active_signal=nullptr;
+thread_local uintptr_t service_callback_stack=0;
+thread_local unsigned host_service_depth=0;
 
 void log(const char* fmt, ...) {
     char buffer[2048]; va_list args; va_start(args,fmt);
@@ -167,7 +170,7 @@ void install_service_initializers(const ot2::LoadedGame& game) {
         const uint32_t brk=0xd4200000 | (0x703<<5);
         memcpy(reinterpret_cast<void*>(address),&brk,4);
     }
-    for(const auto* list:{&ot2::host_services(),&ot2::audio_services(),&ot2::input_services()}) for(const auto& service:*list) {
+    for(const auto* list:{&ot2::host_services(),&ot2::audio_services(),&ot2::input_services(),&ot2::movie_services()}) for(const auto& service:*list) {
         const auto address=game.symbol(service.name);
         if(!address) continue;
         std::erase_if(traps,[&](const auto& t){return t.pc==address;});
@@ -369,6 +372,12 @@ extern "C" void ot2_test_memory_svc(unsigned id,uint64_t* registers){
 }
 extern "C" bool ot2_test_context_fresh(){
     auto* c=create_thread_context();
+    uintptr_t callback=0,reused=0;size_t size=0,reused_size=0;
+    ot2_guest_context_callback_stack(c,callback,size);
+    ot2_guest_context_callback_stack(c,reused,reused_size);
+    if(!callback||callback!=reused||size!=1024*1024||size!=reused_size)return false;
+    *reinterpret_cast<volatile uint8_t*>(callback)=1;
+    *reinterpret_cast<volatile uint8_t*>(callback+size-1)=2;
     bool fresh=c->guest_tls!=0x12340000&&c->guest_tlr!=0x56780000;
     c->guest_tls=0x12340000;c->guest_tlr=0x56780000;
     return fresh;
@@ -409,7 +418,26 @@ extern "C" bool ot2_test_context_exit(){
 extern "C" void crash_thread_init() {}
 uintptr_t callback_stack(GuestThread* c){uintptr_t sp;asm volatile("mov %0,sp":"=r"(sp));
     if(sp>=c->stack&&sp<c->stack+c->stack_size)return (sp-1024)&~uintptr_t(15);
+    if(service_callback_stack)return service_callback_stack;
     return active_signal?(active_signal->uc_mcontext.sp-256)&~uintptr_t(15):0;
+}
+extern "C" uint64_t ot2_call_on_host_stack(uint64_t (*function)(uint64_t*),uint64_t* args){
+    auto* c=current();if(!c||!c->host_frame)fail("Host service outside guest call");
+    struct Invocation {uint64_t (*function)(uint64_t*);uint64_t* args;uintptr_t callback;};
+    Invocation invocation{function,args,callback_stack(c)};
+    auto invoke=+[](uint64_t* raw)->uint64_t{
+        auto& call=*reinterpret_cast<Invocation*>(raw);auto* c=current();
+        const auto previous=service_callback_stack,base=c->stack,size=c->stack_size;
+        if(host_service_depth==0){
+            ot2_guest_context_callback_stack(c,c->stack,c->stack_size);
+            service_callback_stack=c->stack+c->stack_size;
+        }else service_callback_stack=call.callback;
+        ++host_service_depth;auto result=call.function(call.args);--host_service_depth;
+        c->stack=base;c->stack_size=size;service_callback_stack=previous;return result;
+    };
+    // host_frame is the suspended ot2_guest_call frame. A nested callback
+    // establishes a new frame below the current native service automatically.
+    return ot2_host_stack_call(invoke,reinterpret_cast<uint64_t*>(&invocation),(c->host_frame-1024)&~uintptr_t(15));
 }
 extern "C" uint64_t ot2_call_guest(const char* name,const uint64_t* args) {
     auto* c=current();if(!c || !active_game) fail("Guest callback outside active game");
@@ -417,6 +445,10 @@ extern "C" uint64_t ot2_call_guest(const char* name,const uint64_t* args) {
     uintptr_t top=callback_stack(c);
     if(top && top<c->stack+4096) fail("Nested guest callback stack exhausted");
     return ot2_guest_call(entry,c,args,top);
+}
+extern "C" uint64_t ot2_guest_symbol_address(const char* name) {
+    if(!active_game)fail("Guest symbol outside active game");
+    return active_game->symbol(name);
 }
 extern "C" uint64_t ot2_call_guest_address(uint64_t address,const uint64_t* args) {
     auto* c=current();if(!c || !address)fail("Invalid guest callback");
@@ -662,5 +694,6 @@ void boot_game(const std::string& directory,const std::string& log_path,uint64_t
 #include "tests/register_contract.inc"
 #include "tests/tls_contract.inc"
 #include "tests/native_gate_contract.inc"
+#include "tests/host_stack_contract.inc"
 #endif
 }

@@ -2,6 +2,7 @@
 #include "../graphics/backend.h"
 #include "../graphics/nvn_protos.h"
 #include "../graphics/nvn_commands.h"
+#include "../graphics/nvn_deswizzle.h"
 #include <algorithm>
 #include <array>
 #include <cstdio>
@@ -102,6 +103,7 @@ static void queued_contract(NVNqueue& queue){
     P(nvnTextureFinalize)(&t);
     puts("PASS asynchronous frontend fences, timeout, completion visibility, suspend/drain/resume, headless present tickets");
 }
+#include "nvn_cpu_write_contract.inc"
 #include "nvn_draw_contract.inc"
 #include "nvn_attachment_contract.inc"
 #include "nvn_buffer_contract.inc"
@@ -131,6 +133,7 @@ extern "C" int vkhost_test_native_null();
 extern "C" int vkhost_test_bc();
 extern "C" uint64_t vkhost_test_command_recycling(int);
 static void gpu_contract(){
+    if(getenv("OT2_CPU_WRITE_ONLY")){cpu_write_contract();return;}
     if(getenv("OT2_INTEGER_2D_ONLY")){
         NVNqueueBuilder qb{};NVNqueue queue{};P(nvnQueueBuilderSetDefaults)(&qb);P(nvnQueueInitialize)(&queue,&qb);
         integer_2d_contract(queue);depth_alias_contract(queue);lighting_mask_contract(queue);P(nvnQueueFinalize)(&queue);return;

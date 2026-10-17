@@ -87,6 +87,25 @@ ot2_guest_call: // entry, thread context, eight argument words, optional nested 
     ret
 .size ot2_guest_call, .-ot2_guest_call
 
+// Run a service below the suspended native frame. x19 keeps the small guest
+// stack while AAPCS64 callees, including nested guest callbacks, preserve it.
+.global ot2_host_stack_call
+.type ot2_host_stack_call, %function
+ot2_host_stack_call:
+    stp x29,x30,[sp,#-32]!
+    stp x19,x20,[sp,#16]
+    mov x29,sp
+    mov x19,sp
+    mov x16,x0
+    mov x0,x1
+    mov sp,x2
+    blr x16
+    mov sp,x19
+    ldp x19,x20,[sp,#16]
+    ldp x29,x30,[sp],#32
+    ret
+.size ot2_host_stack_call, .-ot2_host_stack_call
+
 // ExitThread can arrive from a nested signal or native callback. Restore the
 // outermost pthread frame before publishing thread completion and running TLS
 // destructors; those destructors own the guest/signal stack allocations.

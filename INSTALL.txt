@@ -22,7 +22,8 @@ You need:
 
 Read README.md and the profiles/ directory for supported games and versions.
 OCTOPATH TRAVELER II requires version 1.1.1, update 131072, title ID
-0100a3501946e000. DLC is optional.
+0100a3501946e000. TRIANGLE STRATEGY requires version 1.1.1, update 262144,
+title ID 0100cc80140f8000. DLC is optional.
 
 Only common-ticket NSPs are supported. Do not obtain games or keys for the user,
 upload their files, or bypass a missing profile, build-ID check or validation
@@ -132,6 +133,9 @@ For another supported profile, use its title_id and a listed version that is
 actually present in the inputs. If the requested version is absent, ask for
 the matching package. Do not silently switch games or versions.
 
+For TRIANGLE STRATEGY 1.1.1, use S2A_TITLE_ID="0100cc80140f8000" and
+S2A_VERSION="262144".
+
 The build includes matching DLC automatically. Do not omit supplied DLC unless
 the user requested it; use --no-dlc only in that case. Duplicate title/version
 packages or DLC requiring a newer update must be resolved before building.
@@ -210,8 +214,8 @@ user to unlock the device and accept the USB debugging prompt.
     adb -s "$S2A_SERIAL" shell df -h /sdcard
 
 Require Android API 33 or later, arm64-v8a and Vulkan support. These are minimum
-requirements, not a guarantee for every GPU. For OCTOPATH TRAVELER II, allow
-14 GB of free device storage for a fresh import.
+requirements, not a guarantee for every GPU. For a fresh import, allow 14 GB
+of free device storage for OCTOPATH TRAVELER II or 20 GB for TRIANGLE STRATEGY.
 
     .venv/bin/python switch2android.py install \
       "$S2A_PRODUCT" --serial "$S2A_SERIAL"

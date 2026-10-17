@@ -24,6 +24,7 @@
 #include "cache_budget.h"
 #include "clear_shaders.h"
 #include "nvn_deswizzle.h"
+#include "texture_write.h"
 #include "nvn_dirty.h"
 #include <set>
 #include <cstdarg>
@@ -300,11 +301,11 @@ VkFormat format(int f) {
         F(R16F,R16_SFLOAT);F(R16,R16_UNORM);F(R16SN,R16_SNORM);F(R16UI,R16_UINT);F(R16I,R16_SINT);
         F(R32F,R32_SFLOAT);F(R32UI,R32_UINT);F(R32I,R32_SINT);
         F(RG8,R8G8_UNORM);F(RG8SN,R8G8_SNORM);F(RG8UI,R8G8_UINT);F(RG8I,R8G8_SINT);
-        F(RG16F,R16G16_SFLOAT);F(RG16,R16G16_UNORM);F(RG16UI,R16G16_UINT);F(RG16I,R16G16_SINT);
+        F(RG16F,R16G16_SFLOAT);F(RG16,R16G16_UNORM);F(RG16SN,R16G16_SNORM);F(RG16UI,R16G16_UINT);F(RG16I,R16G16_SINT);
         F(RGB32F,R32G32B32_SFLOAT);F(RGB32UI,R32G32B32_UINT);F(RGB32I,R32G32B32_SINT);
         F(RG32F,R32G32_SFLOAT);F(RG32UI,R32G32_UINT);F(RG32I,R32G32_SINT);
         F(RGBA8,R8G8B8A8_UNORM);F(RGBA8SN,R8G8B8A8_SNORM);F(RGBA8UI,R8G8B8A8_UINT);F(RGBA8I,R8G8B8A8_SINT);
-        F(RGBA16F,R16G16B16A16_SFLOAT);F(RGBA16,R16G16B16A16_UNORM);F(RGBA16UI,R16G16B16A16_UINT);F(RGBA16I,R16G16B16A16_SINT);
+        F(RGBA16F,R16G16B16A16_SFLOAT);F(RGBA16,R16G16B16A16_UNORM);F(RGBA16SN,R16G16B16A16_SNORM);F(RGBA16UI,R16G16B16A16_UINT);F(RGBA16I,R16G16B16A16_SINT);
         F(RGBA32F,R32G32B32A32_SFLOAT);F(RGBA32UI,R32G32B32A32_UINT);F(RGBA32I,R32G32B32A32_SINT);
         F(BGRA8,B8G8R8A8_UNORM);F(BGRX8,B8G8R8A8_UNORM);F(BGRA8_SRGB,B8G8R8A8_SRGB);F(BGRX8_SRGB,B8G8R8A8_SRGB);
         F(RGBA8_SRGB,R8G8B8A8_SRGB);F(RGBX8,R8G8B8A8_UNORM);F(RGBX8_SRGB,R8G8B8A8_SRGB);
@@ -1050,6 +1051,23 @@ extern "C" int vkhost_probe_resource_lifecycle() {
     {std::lock_guard lock(state_mutex);valid&=!find_image(b.serial)&&image_views.size()==before&&!texture_pools.contains(descriptor_pool_key(&second))&&!texture_references.contains(a.serial)&&!texture_references.contains(b.serial);
         auto previous=active_texture_pool;active_texture_pool=descriptor_pool_key(&second);valid&=!texture_descriptor(1)&&!texture_descriptor(2);active_texture_pool=previous;}
     return valid;
+}
+extern "C" void vkhost_write_texels(const tex_t* texture,const view_t* view,const NVNcopyRegion* region,const void* source,int64_t row,int64_t slice){
+    if(!texture||!region||!source)ot2_host_die("Invalid CPU texture write");
+    drain_queues();std::lock_guard lock(state_mutex);
+    const unsigned level=view&&view->set_levels?view->base_level:0,layer=view&&view->set_layers?view->min_layer:0;
+    int bw,bh,bytes=nvn_fmt_bpb(texture->d.format,&bw,&bh);ot2::CopyLayout layout;
+    if(!ot2::copy_layout(region->width,region->height,region->depth,bw,bh,bytes,row,slice,layout)||!ot2::copy_address(uintptr_t(source),layout.extent))ot2_host_die("Invalid CPU texture write stride");
+    if(view&&view->set_layers&&view->nlayers>0&&(region->zoffset<0||region->depth>view->nlayers-region->zoffset))ot2_host_die("CPU texture write exceeds view");
+    // Initialize/preserve untouched pixels before modifying the backing pool.
+    reset_prepared_bindings();upload_packaged(*texture);
+    {NvnDirtyWrite lease(texture->mem,texture->L.size);
+        if(!ot2::write_texture_memory(*texture,level,layer,*region,{static_cast<const uint8_t*>(source),layout.extent},row,slice))ot2_host_die("Invalid CPU texture write region");}
+    const auto old_row=copy_row_stride,old_image=copy_image_stride;
+    copy_row_stride=row;copy_image_stride=slice;
+    p_copy_b2t copy{};copy.tex=texture;copy.src=uintptr_t(source);copy.r=*region;copy.has_view=view!=nullptr;if(view)copy.view=*view;
+    copy_to_texture(copy);flush_commands();copy_row_stride=old_row;copy_image_stride=old_image;
+    if(texture->d.pkg_block_h){auto& image=image_for(*texture);image.source_tracked=nvn_dirty_protect(texture->mem,texture->L.size);image.source_stamp=image.source_seen=nvn_dirty_now();}
 }
 extern "C" void vkhost_read_texels(const tex_t* texture,unsigned level,unsigned layer,const NVNcopyRegion* region,uint8_t* destination,size_t row_stride,size_t image_stride) {
     drain_queues();

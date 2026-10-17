@@ -11,6 +11,7 @@ This repository contains source code, tools and compatibility profiles. It does 
 | Game | Version | Title ID |
 |---|---|---|
 | OCTOPATH TRAVELER II | 1.1.1 (update 131072) | `0100a3501946e000` |
+| TRIANGLE STRATEGY | 1.1.1 (update 262144) | `0100cc80140f8000` |
 
 Compatibility depends on the game and version. Builds require a matching profile in [profiles/](profiles/).
 
@@ -18,7 +19,7 @@ The input format is NSP with common tickets. XCI, NSZ, personalized tickets and 
 
 ## Requirements
 
-**Android device:** Android 13 or later, an ARM64 processor and Vulkan support. At least 8 GB of RAM is recommended. For OCTOPATH TRAVELER II, allow 14 GB of free storage for installation. No root access is needed.
+**Android device:** Android 13 or later, an ARM64 processor and Vulkan support. At least 8 GB of RAM is recommended. Allow 14 GB of free storage to install OCTOPATH TRAVELER II, or 20 GB for TRIANGLE STRATEGY. No root access is needed.
 
 **Build tools:**
 
@@ -58,7 +59,7 @@ Put the base NSP and any update or DLC NSPs in one directory. Files are identifi
 ~/keys/prod.keys
 ```
 
-For OCTOPATH TRAVELER II, include the 1.1.1 update. DLC is optional.
+For either supported game, include its 1.1.1 update. DLC is optional.
 
 ### 2. Set up the tools
 
@@ -98,7 +99,7 @@ switch2android-output/0100a3501946e000-v131072/
   INSTALL.txt
 ```
 
-Resource bundles up to 1 GiB are embedded in the APK by default. Larger games, including OCTOPATH TRAVELER II, use an APK plus a `.s2a` resource file. Embedded builds do not produce a separate `.s2a` file.
+Resource bundles up to 1 GiB are embedded in the APK by default. Larger games, including both supported titles, use an APK plus a `.s2a` resource file. Embedded builds do not produce a separate `.s2a` file.
 
 Existing output directories are not overwritten. Use a new `--output` directory when rebuilding; keep the same `--work` directory to reuse cached files.
 

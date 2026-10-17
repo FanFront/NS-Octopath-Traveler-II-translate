@@ -1,0 +1,9 @@
+{
+  "title_id": "0100cc80140f8000",
+  "name": "TRIANGLE STRATEGY",
+  "status": "playable",
+  "versions": [262144],
+  "main_build_ids": ["9cb4490e8a718bae392c59b0368d7c4e00000000000000000000000000000000"],
+  "resource_adapter": "unreal",
+  "default_fps": 30
+}

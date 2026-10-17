@@ -23,6 +23,7 @@ void vkhost_tex_release(tex_t* texture);
 void vkhost_tex_retain(uint64_t serial);
 void vkhost_tex_unref(uint64_t serial);
 void vkhost_prog_release(prog_t* program);
+void vkhost_write_texels(const tex_t*,const view_t*,const NVNcopyRegion*,const void*,int64_t,int64_t);
 void vkhost_read_texels(const tex_t*,unsigned,unsigned,const NVNcopyRegion*,uint8_t*,size_t,size_t);
 uint64_t vkhost_last_fence(void);
 int vkhost_wait(uint64_t fence,uint64_t timeout);

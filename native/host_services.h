@@ -7,6 +7,7 @@ struct HostService { const char* name; uint64_t (*call)(uint64_t*); };
 const std::vector<HostService>& host_services();
 const std::vector<HostService>& audio_services();
 const std::vector<HostService>& input_services();
+const std::vector<HostService>& movie_services();
 void set_activity_active(bool active);
 void set_io_prefetch(bool enabled);
 // nn::oe::FocusState: 1 = focused, 2 = visible without focus, 3 = background.

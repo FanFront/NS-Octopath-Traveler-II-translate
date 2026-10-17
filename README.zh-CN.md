@@ -11,6 +11,7 @@ Android 13+ · ARM64 · Vulkan · MIT · **需要自备游戏文件和密钥**
 | 游戏 | 版本 | Title ID |
 |---|---|---|
 | OCTOPATH TRAVELER II（八方旅人 II） | 1.1.1（更新 131072） | `0100a3501946e000` |
+| TRIANGLE STRATEGY（三角战略） | 1.1.1（更新 262144） | `0100cc80140f8000` |
 
 兼容性取决于游戏及其版本。构建需要 [profiles/](profiles/) 中有对应的适配配置。
 
@@ -18,7 +19,7 @@ Android 13+ · ARM64 · Vulkan · MIT · **需要自备游戏文件和密钥**
 
 ## 使用条件
 
-**Android 设备：** Android 13 及以上、ARM64 处理器、支持 Vulkan，建议至少 8 GB 内存。《八方旅人 II》安装时需预留 14 GB 可用存储空间。不需要 root。
+**Android 设备：** Android 13 及以上、ARM64 处理器、支持 Vulkan，建议至少 8 GB 内存。安装《八方旅人 II》需预留 14 GB 可用存储空间，《三角战略》需预留 20 GB。不需要 root。
 
 **构建工具：**
 
@@ -58,7 +59,7 @@ sdkmanager --licenses
 ~/keys/prod.keys
 ```
 
-《八方旅人 II》需要包含 1.1.1 更新，DLC 可选。
+两款支持的游戏都需要包含各自的 1.1.1 更新，DLC 可选。
 
 ### 2. 准备工具
 
@@ -98,7 +99,7 @@ switch2android-output/0100a3501946e000-v131072/
   INSTALL.txt
 ```
 
-默认将不超过 1 GiB 的资源包内嵌到 APK。较大的游戏（包括《八方旅人 II》）生成 APK 和独立的 `.s2a` 资源文件。内嵌模式不会单独生成 `.s2a` 文件。
+默认将不超过 1 GiB 的资源包内嵌到 APK。较大的游戏（包括当前支持的两款游戏）生成 APK 和独立的 `.s2a` 资源文件。内嵌模式不会单独生成 `.s2a` 文件。
 
 已有输出目录不会被覆盖。重新构建时请指定新的 `--output` 目录，`--work` 可保持不变以复用缓存。
 

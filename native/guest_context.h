@@ -12,5 +12,6 @@ extern "C" __attribute__((visibility("hidden"))) GuestThread ot2_threads[GuestTh
 GuestThread* ot2_guest_context_current();
 GuestThread* ot2_guest_context_create();
 void ot2_guest_context_use_stack(GuestThread*,uintptr_t base,size_t size);
+void ot2_guest_context_callback_stack(GuestThread*,uintptr_t& base,size_t& size);
 size_t ot2_guest_context_live();
 size_t ot2_guest_context_bytes();

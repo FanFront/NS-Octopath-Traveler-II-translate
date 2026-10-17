@@ -16,6 +16,7 @@ struct Owned {
     void* tls{};size_t tls_size=16384;
     void* stack{};size_t stack_size{};
     void* signal{};size_t signal_size=2*1024*1024;
+    void* callback{};size_t callback_size{};
 };
 void* allocate(size_t size,int protection){
     auto* memory=mmap(nullptr,size,protection,MAP_PRIVATE|MAP_ANONYMOUS,-1,0);
@@ -29,10 +30,11 @@ void destroy(void* value){
     // signal/guest stack while pthread destructors are still executing on it.
     uintptr_t sp;asm volatile("mov %0,sp":"=r"(sp));
     auto inside=[&](void* p,size_t size){return p&&sp>=uintptr_t(p)&&sp<uintptr_t(p)+size;};
-    if(inside(owned->stack,owned->stack_size)||inside(owned->signal,owned->signal_size))ot2_host_die("Guest context destroyed on an owned stack");
+    if(inside(owned->stack,owned->stack_size)||inside(owned->signal,owned->signal_size)||inside(owned->callback,owned->callback_size))ot2_host_die("Guest context destroyed on an owned stack");
     stack_t disabled{};disabled.ss_flags=SS_DISABLE;if(sigaltstack(&disabled,nullptr))ot2_host_die("Guest signal stack disable failed");
     // Free immutable allocation addresses, never guest-modifiable TLS/TLR.
     release(owned->tls,owned->tls_size);release(owned->stack,owned->stack_size);release(owned->signal,owned->signal_size);
+    release(owned->callback,owned->callback_size);
     c->host_x18=c->host_frame=c->guest_tls=c->guest_tlr=c->stack=c->stack_size=c->handle=0;
     __atomic_store_n(&c->host_tp,0,__ATOMIC_RELEASE);live.fetch_sub(1);delete owned;
 }
@@ -68,6 +70,17 @@ void ot2_guest_context_use_stack(GuestThread* c,uintptr_t base,size_t size){
     auto* owned=static_cast<Owned*>(pthread_getspecific(key));if(!owned||owned->context!=c)ot2_host_die("Guest stack assignment on wrong thread");
     release(owned->stack,owned->stack_size);owned->stack=nullptr;owned->stack_size=0;
     c->stack=base;c->stack_size=size; // SDK-owned mapping; the SDK releases it after thread completion.
+}
+void ot2_guest_context_callback_stack(GuestThread* c,uintptr_t& base,size_t& size){
+    auto* owned=static_cast<Owned*>(pthread_getspecific(key));if(!owned||owned->context!=c)ot2_host_die("Callback stack on wrong thread");
+    // Only services using the native-stack boundary allocate this. Reuse it
+    // until thread exit, with guards on both ends and a fixed 1 MiB upper bound.
+    const size_t page=sysconf(_SC_PAGESIZE);size=1024*1024;
+    if(!owned->callback){
+        owned->callback_size=size+2*page;owned->callback=allocate(owned->callback_size,PROT_NONE);
+        if(mprotect(static_cast<uint8_t*>(owned->callback)+page,size,PROT_READ|PROT_WRITE))ot2_host_die("Callback stack protection failed");
+    }
+    base=uintptr_t(owned->callback)+page;
 }
 size_t ot2_guest_context_live(){return live.load();}
 size_t ot2_guest_context_bytes(){return mapped_bytes.load();}

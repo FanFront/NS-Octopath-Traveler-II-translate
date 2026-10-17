@@ -27,6 +27,7 @@ extern "C" void vkhost_tex_retain(uint64_t){}
 extern "C" void vkhost_tex_unref(uint64_t){}
 extern "C" void vkhost_prog_release(prog_t*){}
 extern "C" void vkhost_program(const prog_t*){}
+extern "C" void vkhost_write_texels(const tex_t*,const view_t*,const NVNcopyRegion*,const void*,int64_t,int64_t){}
 extern "C" void vkhost_read_texels(const tex_t*,unsigned,unsigned,const NVNcopyRegion*,uint8_t*,size_t,size_t){}
 extern "C" uint64_t vkhost_last_fence(){return 0;}
 extern "C" int vkhost_wait(uint64_t,uint64_t){return 1;}
