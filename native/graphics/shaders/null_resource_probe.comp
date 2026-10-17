@@ -1,0 +1,39 @@
+#version 450
+layout(local_size_x=1) in;
+layout(set=0,binding=1,std430) buffer Output { vec4 values[]; } result;
+layout(set=0,binding=2,std430) buffer EmptyBuffer { uint words[]; } empty_buffer;
+layout(set=0,binding=3,std140) uniform EmptyUniform { vec4 value; } empty_uniform;
+layout(set=0,binding=4) uniform sampler2D tex2d;
+layout(set=0,binding=5) uniform sampler3D tex3d;
+layout(set=0,binding=6) uniform samplerCube texcube;
+layout(set=0,binding=7) uniform sampler2DArray texarray;
+layout(set=0,binding=8) uniform samplerCubeArray texcubearray;
+layout(set=0,binding=9) uniform sampler2DMS texms;
+layout(set=0,binding=10) uniform sampler2DShadow texshadow;
+layout(set=0,binding=11) uniform usamplerBuffer texbuffer;
+layout(set=0,binding=12,rgba32f) uniform image2D sink;
+layout(set=0,binding=13,r32ui) uniform uimageBuffer atomic_sink;
+layout(set=0,binding=14,rgba32f) uniform image3D sink3d;
+layout(set=0,binding=15,rgba32f) uniform image2DArray sinkarray;
+void main(){
+    result.values[0]=textureLod(tex2d,vec2(.5),0);
+    result.values[1]=textureLod(tex3d,vec3(.5),0);
+    result.values[2]=textureLod(texcube,vec3(1,0,0),0);
+    result.values[3]=textureLod(texarray,vec3(.5,.5,0),0);
+    result.values[4]=textureLod(texcubearray,vec4(1,0,0,0),0);
+    result.values[5]=texelFetch(texms,ivec2(0),0);
+    result.values[6]=vec4(textureLod(texshadow,vec3(.5,.5,.5),0));
+    result.values[7]=vec4(texelFetch(texbuffer,0));
+    imageStore(sink,ivec2(0),vec4(97));
+    imageStore(sink3d,ivec3(0),vec4(98));
+    imageStore(sinkarray,ivec3(0),vec4(99));
+    uint previous=imageAtomicAdd(atomic_sink,0,101);
+    uint old_buffer=atomicAdd(empty_buffer.words[0],102);
+    memoryBarrier();
+    result.values[8]=imageLoad(sink,ivec2(0));
+    result.values[9]=imageLoad(sink3d,ivec3(0));
+    result.values[10]=imageLoad(sinkarray,ivec3(0));
+    result.values[11]=vec4(previous,imageLoad(atomic_sink,0).r,old_buffer,empty_buffer.words[0]);
+    result.values[12]=empty_uniform.value;
+    result.values[13]=textureLod(tex2d,vec2(.5),0); // writes must not pollute zero reads
+}

@@ -1,0 +1,19 @@
+#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=0,std430) readonly buffer Source { uint words[]; } src;
+layout(set=0,binding=1,std430) writeonly buffer Destination { uint words[]; } dst;
+layout(set=0,binding=2,std140) uniform Geometry { uvec4 shape; uvec4 tile; } p;
+// Tegra GOB addressing. One invocation owns a complete output word, including
+// byte/BC formats, so adjacent bytes never race on the same destination word.
+uint source_offset(uint linear) {
+    uint row=p.shape.x,rows=p.shape.y,base=p.shape.w;
+    uint x=linear%row,y=(linear/row)%rows,z=linear/(row*rows);
+    uint bh=1u<<p.tile.x,bd=1u<<p.tile.y,gobs=(row+63u)/64u,blocks=(rows+8u*bh-1u)/(8u*bh),block=512u*bh*bd;
+    uint gob=(x%64u/32u)*256u+(y%8u/2u)*64u+(x%32u/16u)*32u+(y%2u)*16u+x%16u;
+    return base+(z/bd)*gobs*blocks*block+(y/(8u*bh))*gobs*block+(x/64u)*block+((z%bd)*bh+(y%(8u*bh))/8u)*512u+gob;
+}
+void main(){
+    uint at=((gl_WorkGroupID.y*65535u+gl_WorkGroupID.x)*64u+gl_LocalInvocationID.x)*4u,total=p.shape.x*p.shape.y*p.shape.z;if(at>=total)return;
+    uint value=0u;for(uint i=0u;i<4u&&at+i<total;i++){uint offset=source_offset(at+i);value|=((src.words[offset/4u]>>((offset%4u)*8u))&255u)<<(i*8u);}
+    dst.words[at/4u]=value;
+}

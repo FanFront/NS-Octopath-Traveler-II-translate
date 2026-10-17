@@ -1,0 +1,4 @@
+#version 450
+layout(local_size_x=1) in;
+layout(set=0,binding=1,std430) buffer Values {uvec4 value;} data;
+void main(){data.value+=uvec4(3,5,7,11);}

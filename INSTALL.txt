@@ -1,0 +1,295 @@
+Switch2Android: build and install instructions for agents
+=======================================================
+
+Follow these steps to build an Android app from the user's own NSP files.
+If installation was requested, continue through device installation and launch
+verification. Run commands from the repository root in a POSIX shell.
+
+Use information already supplied by the user. Ask only for missing paths, an
+ambiguous game/device choice, or an action that requires the user's physical
+interaction. Continue independent build work while waiting for a device.
+
+1. Identify the inputs
+----------------------
+
+You need:
+
+  - A directory containing the base NSP, its update and any desired DLC NSPs.
+    NSPs must be directly inside this directory, not in nested directories.
+  - The path to the user's prod.keys file. Never ask for key contents in chat.
+  - A work directory and output directory outside the source repository.
+  - For installation, the intended Android device with USB debugging enabled.
+
+Read README.md and the profiles/ directory for supported games and versions.
+OCTOPATH TRAVELER II requires version 1.1.1, update 131072, title ID
+0100a3501946e000. DLC is optional.
+
+Only common-ticket NSPs are supported. Do not obtain games or keys for the user,
+upload their files, or bypass a missing profile, build-ID check or validation
+failure. A successful metadata inspection does not establish game compatibility.
+
+2. Set paths and check storage
+-----------------------------
+
+Replace the input placeholders below with the paths supplied by the user.
+The work and output paths are examples; choose suitable locations with enough
+space. Keep these variables in the shell environment used for later steps.
+
+    export S2A_INPUT="/absolute/path/to/nsp-directory"
+    export S2A_KEYS="/absolute/path/to/prod.keys"
+    export S2A_WORK="$HOME/switch2android-work"
+    export S2A_OUT="$HOME/switch2android-output"
+
+    test -f switch2android.py
+    test -f scripts/bootstrap-tools.sh
+    test -d "$S2A_INPUT"
+    test -f "$S2A_KEYS"
+    mkdir -p "$S2A_WORK" "$S2A_OUT"
+    df -h "$S2A_WORK" "$S2A_OUT"
+
+Stop on a failed check. Resolve symlinks when checking that all four paths are
+outside the repository. Keep input, work and output directories separate.
+For OCTOPATH TRAVELER II, allow about 60 GB of free host storage in total; both
+the work and output volumes need room if they are on different disks.
+
+Preserve original NSPs, keys and existing outputs. Use a new output directory
+if the intended game/version directory already exists. Reuse the work directory
+for subsequent builds, but do not run concurrent builds against it.
+
+3. Prepare build dependencies
+-----------------------------
+
+Required:
+
+  - Python 3.11+, Git, Make and a C/C++ compiler.
+  - JDK 21, CMake, .NET SDK 10 and Rust/Cargo.
+  - SPIRV-Tools, including spirv-val on PATH.
+  - Android SDK platform 36, NDK 28.2.13676358, SDK CMake 3.22.1,
+    platform-tools and Android command-line tools.
+
+Inspect existing tools first and install only what is missing. On macOS, use
+the Xcode Command Line Tools for the compiler and Homebrew for these packages:
+
+    brew install python@3.13 openjdk@21 cmake rust dotnet spirv-tools
+
+If the compiler is missing, xcode-select --install opens its installer. If the
+Android SDK is missing, install it using Android Studio's SDK Manager or the
+official Android command-line tools. Set ANDROID_HOME to the actual SDK path.
+The following is the standard macOS SDK location, not a required location:
+
+    export JAVA_HOME="$(brew --prefix openjdk@21)/libexec/openjdk.jdk/Contents/Home"
+    export ANDROID_HOME="$HOME/Library/Android/sdk"
+    export PATH="$ANDROID_HOME/platform-tools:$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+
+    sdkmanager 'platforms;android-36' 'ndk;28.2.13676358' 'cmake;3.22.1' 'platform-tools'
+    sdkmanager --licenses
+
+Resolve any SDK license prompts as needed. On another POSIX host, supply the
+same tool versions and set JAVA_HOME and ANDROID_HOME for that host; do not
+copy macOS paths. Native Windows shells cannot run this POSIX workflow.
+
+Verify versions before continuing:
+
+    python3 --version
+    "$JAVA_HOME/bin/java" -version
+    dotnet --list-sdks
+    cargo --version
+    spirv-val --version
+
+Ensure python3 is 3.11 or newer and the .NET SDK list contains 10.x. A dotnet
+executable or runtime alone is insufficient. Use the SDK installation matching
+the host architecture. The first build needs network access for dependencies.
+
+4. Bootstrap the project tools
+------------------------------
+
+    ./scripts/bootstrap-tools.sh "$S2A_WORK"
+    .venv/bin/python switch2android.py doctor
+
+The bootstrap builds pinned hactool and repak revisions and creates .venv.
+Wait for completion and check the exit status. Fix every MISSING result from
+doctor, rerun it, and proceed only when it exits successfully.
+
+Use .venv/bin/python for subsequent project commands. Do not install project
+Python packages globally or replace the pinned tools with arbitrary versions.
+
+5. Inspect the packages and select a supported version
+-----------------------------------------------------
+
+    .venv/bin/python switch2android.py inspect "$S2A_INPUT" \
+      --keys "$S2A_KEYS" --hactool "$S2A_WORK/tools/hactool/hactool"
+
+Match the returned application_id and version to a profile in profiles/.
+Use content metadata rather than filenames. Select the user's requested game;
+if multiple games are present and no choice was given, ask which one to build.
+
+For OCTOPATH TRAVELER II 1.1.1:
+
+    export S2A_TITLE_ID="0100a3501946e000"
+    export S2A_VERSION="131072"
+
+For another supported profile, use its title_id and a listed version that is
+actually present in the inputs. If the requested version is absent, ask for
+the matching package. Do not silently switch games or versions.
+
+The build includes matching DLC automatically. Do not omit supplied DLC unless
+the user requested it; use --no-dlc only in that case. Duplicate title/version
+packages or DLC requiring a newer update must be resolved before building.
+
+6. Build the application
+------------------------
+
+    .venv/bin/python switch2android.py build "$S2A_INPUT" \
+      --keys "$S2A_KEYS" \
+      --work "$S2A_WORK" --output "$S2A_OUT" \
+      --title-id "$S2A_TITLE_ID" --version "$S2A_VERSION"
+
+Keep the build running until it finishes. Extraction, shader translation and
+validation can take time; quiet output is not a reason to start a second build.
+The command also runs the Release APK build and Android lint.
+
+Require an exit status of zero and the final "Built:" output. Set S2A_PRODUCT
+to that output directory; for the command above it is:
+
+    export S2A_PRODUCT="$S2A_OUT/$S2A_TITLE_ID-v$S2A_VERSION"
+    test -s "$S2A_PRODUCT/game.apk"
+    test -s "$S2A_PRODUCT/package.json"
+
+The product contains game.apk, package.json and a short INSTALL.txt for the
+package recipient. Large games also contain game.s2a. Resource bundles up to
+1 GiB are embedded automatically; larger bundles stay separate. Do not force
+OCTOPATH TRAVELER II into a single APK.
+
+Do not substitute a bare Gradle host APK for this output: the packaging command
+supplies the game identity, resource manifest and offline shaders.
+
+7. Check the generated output
+-----------------------------
+
+Check the APK against its recorded hash and read the resource mode:
+
+    .venv/bin/python - "$S2A_PRODUCT" <<'PY'
+import hashlib, json, sys
+from pathlib import Path
+product = Path(sys.argv[1])
+metadata = json.loads((product / "package.json").read_text())
+with (product / "game.apk").open("rb") as source:
+    digest = hashlib.file_digest(source, "sha256").hexdigest()
+assert digest == metadata["apk_sha256"], "APK checksum mismatch"
+if not metadata["embedded"]:
+    assert (product / "game.s2a").is_file(), "Resource bundle is missing"
+print("APK SHA-256:", digest)
+print("Application ID:", metadata["application_id"])
+print("Embedded resources:", metadata["embedded"])
+PY
+
+If this is a build-only request, verify an external resource bundle as well:
+
+    .venv/bin/python switch2android.py verify "$S2A_PRODUCT/game.s2a"
+
+The returned identity must equal bundle_id in package.json. Skip this command
+for embedded builds. For ADB installation, the install command performs the
+resource verification before transferring new content, so do not repeat it.
+
+For a build-only request, continue to step 10. Otherwise proceed below.
+
+8. Select the Android device and install
+---------------------------------------
+
+    adb devices -l
+
+Use the device the user designated. If exactly one authorized device is
+connected and no other device was specified, use it. If the target is
+ambiguous, ask rather than choosing arbitrarily. For "unauthorized", ask the
+user to unlock the device and accept the USB debugging prompt.
+
+    export S2A_SERIAL="YOUR_DEVICE_SERIAL"
+    adb -s "$S2A_SERIAL" shell getprop ro.build.version.sdk
+    adb -s "$S2A_SERIAL" shell getprop ro.product.cpu.abilist
+    adb -s "$S2A_SERIAL" shell pm list features
+    adb -s "$S2A_SERIAL" shell df -h /sdcard
+
+Require Android API 33 or later, arm64-v8a and Vulkan support. These are minimum
+requirements, not a guarantee for every GPU. For OCTOPATH TRAVELER II, allow
+14 GB of free device storage for a fresh import.
+
+    .venv/bin/python switch2android.py install \
+      "$S2A_PRODUCT" --serial "$S2A_SERIAL"
+
+This installs with adb install -r, transfers resources when needed and launches
+the app. Retain the existing signing key, normally ~/.android/debug.keystore,
+when rebuilding or moving computers. On a signature mismatch, recover the
+original key; do not uninstall the app or clear its data to force installation.
+
+If no device is available, deliver the built files and manual instructions:
+install game.apk, open it, and select game.s2a from the same build if prompted.
+Report installation as pending rather than delaying the completed build.
+
+9. Verify import and launch
+--------------------------
+
+The install command returns after starting the app; first-run import continues
+on the device. Keep it connected and wait for the import to finish.
+
+Read the application and bundle identities:
+
+    S2A_APP_ID="$(.venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["application_id"])' "$S2A_PRODUCT/package.json")"
+    S2A_BUNDLE_ID="$(.venv/bin/python -c 'import json,sys; print(json.load(open(sys.argv[1]))["bundle_id"])' "$S2A_PRODUCT/package.json")"
+
+Check the import marker after the on-screen import has completed:
+
+    adb -s "$S2A_SERIAL" shell cat "/sdcard/Android/data/$S2A_APP_ID/files/content/$S2A_BUNDLE_ID/.complete"
+
+Its contents must equal S2A_BUNDLE_ID. A missing marker while progress is still
+advancing means the import is not finished; do not interrupt it or reinstall.
+If device policy blocks reading this path, verify completion through the UI.
+
+Inspect the running app with available device tools, or capture a screenshot:
+
+    adb -s "$S2A_SERIAL" exec-out screencap -p > "$S2A_WORK/launch-check.png"
+
+Confirm the game's title screen or main menu is visible and no import error or
+immediate crash occurred. An installed package or live process alone does not
+prove a successful game launch. If visual verification is unavailable, state
+that limitation. Do not alter existing saves to perform this check.
+
+10. Deliver the result
+----------------------
+
+Report:
+
+  - The game/version and whether DLC was included.
+  - The product directory, APK path and SHA-256.
+  - The .s2a path when external resources are required.
+  - Whether the app was only built, installed, or also launch-verified.
+  - Any remaining action needed from the user.
+
+Remind the user to retain the signing key for future updates. Generated files
+contain game content and are for their own use; do not publish or upload them.
+Keep source documentation free of user paths, device serials and private data.
+
+Troubleshooting
+---------------
+
+  Dependency failure:
+    Check the failing tool's version and PATH, fix it, and rerun doctor.
+
+  Cannot decrypt metadata / missing keys:
+    Ask for a matching user-provided dump or key file. Do not print key values
+    or raw hactool output in logs or chat.
+
+  Unsupported version / unknown main build ID / shader validation failure:
+    Report the specific error. Do not edit profiles, bypass checks or inject
+    an unrelated shader cache merely to produce an APK.
+
+  Output already exists:
+    Choose a new S2A_OUT. Keep the existing result and reuse S2A_WORK.
+
+  Interrupted build / low storage:
+    Check the process and free space before retrying. Retain completed caches.
+    If a specific cache is corrupt, isolate only that generated cache; do not
+    delete original inputs, keys, saves or the entire workspace.
+
+  Device import failure:
+    Confirm APK and .s2a came from the same build and check available storage.
+    Retry with the matching bundle. Do not clear app data or remove saves.

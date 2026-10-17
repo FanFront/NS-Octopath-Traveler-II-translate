@@ -1,0 +1,14 @@
+diff --git a/main.c b/main.c
+index 07f53cb..d1b724b 100644
+--- a/main.c
++++ b/main.c
+@@ -472,7 +472,8 @@ int main(int argc, char **argv) {
+     }
+ 
+     /* Try to load titlekeys. */
+-    FILE *titlekeyfile = open_key_file("title");
++    const char *titlekey_override = getenv("OT2_TITLEKEYS_FILE");
++    FILE *titlekeyfile = titlekey_override ? fopen(titlekey_override, "rb") : open_key_file("title");
+     if (titlekeyfile != NULL) {
+         extkeys_parse_titlekeys(&tool_ctx.settings, titlekeyfile);
+     }

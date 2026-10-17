@@ -1,0 +1,8 @@
+#version 450
+layout(local_size_x=64) in;
+layout(set=0,binding=1,std140) uniform Input { uvec4 words[4096]; } source;
+layout(set=0,binding=2,std430) buffer Output { uvec4 words[]; } target;
+void main() {
+    uint index=gl_GlobalInvocationID.x;
+    target.words[index]=source.words[index];
+}

@@ -1,0 +1,9 @@
+{
+  "title_id": "0100a3501946e000",
+  "name": "OCTOPATH TRAVELER II",
+  "status": "playable",
+  "versions": [131072],
+  "main_build_ids": ["0d9649011312f62e93f6a5673a09d7e900000000000000000000000000000000"],
+  "resource_adapter": "unreal",
+  "default_fps": 30
+}

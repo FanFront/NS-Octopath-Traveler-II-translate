@@ -1,0 +1,5 @@
+#version 450
+layout(local_size_x=1) in;
+layout(set=0,binding=1,r32f) uniform imageBuffer source;
+layout(set=0,binding=2,std430) buffer Output {uint words[];} result;
+void main(){for(int i=0;i<4;++i){uint v=floatBitsToUint(imageLoad(source,i).r);result.words[i]=v;imageStore(source,i,vec4(uintBitsToFloat(v+3u),0,0,0));}}
