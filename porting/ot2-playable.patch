@@ -1,0 +1,1198 @@
+From 820c1c0c1dcb7db3ede1dd83fca405b0569437c0 Mon Sep 17 00:00:00 2001
+From: OT2 Port <ot2@local>
+Date: Sun, 18 Oct 2026 12:41:17 +0800
+Subject: [PATCH] OT2 playable build: single-core report, uinput gamepad
+ ignore, HUD auto-hide, NACP icon, debug instrumentation
+
+---
+ app/src/main/AndroidManifest.xml              |   2 +-
+ .../main/java/dev/ot2/port/GameInputView.java |   5 +-
+ .../main/java/dev/ot2/port/MainActivity.java  |   2 +
+ app/src/main/res/mipmap-hdpi/ic_launcher.png  | Bin 0 -> 4861 bytes
+ app/src/main/res/mipmap-mdpi/ic_launcher.png  | Bin 0 -> 3465 bytes
+ app/src/main/res/mipmap-xhdpi/ic_launcher.png | Bin 0 -> 5985 bytes
+ .../main/res/mipmap-xxhdpi/ic_launcher.png    | Bin 0 -> 9348 bytes
+ .../main/res/mipmap-xxxhdpi/ic_launcher.png   | Bin 0 -> 12909 bytes
+ native/graphics/backend.cpp                   |   2 +-
+ native/graphics/gpu_completion.inc            |   2 +-
+ native/guest.cpp                              |  14 +-
+ native/probe.cpp                              |   3 +-
+ native/thread_services.c                      | 150 ++++++++++++------
+ native/thread_services.h                      |   2 +
+ 14 files changed, 124 insertions(+), 58 deletions(-)
+ create mode 100644 app/src/main/res/mipmap-hdpi/ic_launcher.png
+ create mode 100644 app/src/main/res/mipmap-mdpi/ic_launcher.png
+ create mode 100644 app/src/main/res/mipmap-xhdpi/ic_launcher.png
+ create mode 100644 app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+ create mode 100644 app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+
+diff --git a/app/src/main/AndroidManifest.xml b/app/src/main/AndroidManifest.xml
+index 872fc1b..4283fb8 100644
+--- a/app/src/main/AndroidManifest.xml
++++ b/app/src/main/AndroidManifest.xml
+@@ -1,7 +1,7 @@
+ <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+     <uses-feature android:name="android.hardware.vulkan.level" android:version="1" android:required="true" />
+     <application android:label="@string/app_name" android:theme="@android:style/Theme.Material.NoActionBar"
+-        android:icon="@drawable/app_icon" android:dataExtractionRules="@xml/data_extraction_rules" android:allowBackup="false" android:supportsRtl="true" android:appCategory="game">
++        android:icon="@mipmap/ic_launcher" android:roundIcon="@mipmap/ic_launcher" android:dataExtractionRules="@xml/data_extraction_rules" android:allowBackup="false" android:supportsRtl="true" android:appCategory="game">
+         
+         <activity android:name=".LauncherActivity" android:launchMode="singleTask" android:exported="true" android:configChanges="orientation|screenSize|screenLayout|keyboardHidden">
+             <intent-filter>
+diff --git a/app/src/main/java/dev/ot2/port/GameInputView.java b/app/src/main/java/dev/ot2/port/GameInputView.java
+index f95a691..7abed1a 100644
+--- a/app/src/main/java/dev/ot2/port/GameInputView.java
++++ b/app/src/main/java/dev/ot2/port/GameInputView.java
+@@ -49,7 +49,10 @@ final class GameInputView extends View {
+     static boolean gamepadSource(int sources,boolean virtual){return !virtual&&((sources&InputDevice.SOURCE_GAMEPAD)==InputDevice.SOURCE_GAMEPAD||(sources&InputDevice.SOURCE_JOYSTICK)==InputDevice.SOURCE_JOYSTICK);}
+     static boolean controllerPresent(){
+         for(int id:InputDevice.getDeviceIds()){
+-            InputDevice d=InputDevice.getDevice(id);if(d!=null&&gamepadSource(d.getSources(),d.isVirtual()))return true;
++            InputDevice d=InputDevice.getDevice(id);if(d==null||!gamepadSource(d.getSources(),d.isVirtual()))continue;
++            String n=d.getName();
++            if(n!=null&&n.startsWith("uinput-"))continue;   // 忽略 MIUI 游戏加速等注入的虚拟手柄
++            return true;
+         }return false;
+     }
+     boolean controlsVisible(){return !controllerConnected;}
+diff --git a/app/src/main/java/dev/ot2/port/MainActivity.java b/app/src/main/java/dev/ot2/port/MainActivity.java
+index 19542fc..68dab7b 100644
+--- a/app/src/main/java/dev/ot2/port/MainActivity.java
++++ b/app/src/main/java/dev/ot2/port/MainActivity.java
+@@ -254,6 +254,8 @@ public final class MainActivity extends Activity implements InputManager.InputDe
+             FrameLayout.LayoutParams hudParams=new FrameLayout.LayoutParams(-2,-2,android.view.Gravity.TOP|android.view.Gravity.START);
+             int margin=Math.round(12*getResources().getDisplayMetrics().density);
+             hudParams.setMargins(margin,margin,margin,margin);root.addView(performanceHud,hudParams);
++            performanceHud.setOnClickListener(v->performanceHud.setVisibility(View.GONE));
++            root.postDelayed(()->{if(performanceHud!=null&&!isDestroyed())performanceHud.setVisibility(View.GONE);},6000);
+             performanceHud.setOnApplyWindowInsetsListener((view,insets)->{
+                 android.graphics.Insets safe=insets.getInsets(android.view.WindowInsets.Type.displayCutout());
+                 FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)view.getLayoutParams();
+diff --git a/app/src/main/res/mipmap-hdpi/ic_launcher.png b/app/src/main/res/mipmap-hdpi/ic_launcher.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..2dd3a5ee459573e10ae50d452c79c60d1b24808a
+GIT binary patch
+literal 4861
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/app/src/main/res/mipmap-mdpi/ic_launcher.png b/app/src/main/res/mipmap-mdpi/ic_launcher.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..e6ba3bf0bb5e567eae67cacf51980500ed828493
+GIT binary patch
+literal 3465
+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
+
+literal 0
+HcmV?d00001
+
+diff --git a/app/src/main/res/mipmap-xhdpi/ic_launcher.png b/app/src/main/res/mipmap-xhdpi/ic_launcher.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..c32de9cab3acc70afaa2cd01c35964a2fb7d4012
+GIT binary patch
+literal 5985
+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
+LXR34mtTX=K`78NR
+
+literal 0
+HcmV?d00001
+
+diff --git a/app/src/main/res/mipmap-xxhdpi/ic_launcher.png b/app/src/main/res/mipmap-xxhdpi/ic_launcher.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..ed048fe4ea761ad2e4c5e6456e4c8c2b41c0417a
+GIT binary patch
+literal 9348
+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
+T7#W`T|9W{YrzTr2Z5H@{7$edG
+
+literal 0
+HcmV?d00001
+
+diff --git a/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png b/app/src/main/res/mipmap-xxxhdpi/ic_launcher.png
+new file mode 100644
+index 0000000000000000000000000000000000000000..ba11e1b416dc9354b4c4e68d540df3ef6e5aabda
+GIT binary patch
+literal 12909
+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
+Ve_set`upz<a#G5YRpKT={|_n|eh2^n
+
+literal 0
+HcmV?d00001
+
+diff --git a/native/graphics/backend.cpp b/native/graphics/backend.cpp
+index 533aca0..c0a8f65 100644
+--- a/native/graphics/backend.cpp
++++ b/native/graphics/backend.cpp
+@@ -289,7 +289,7 @@ void finish_commands(VkCommandBuffer cmd) {
+     check(vkEndCommandBuffer(cmd),"end commands");
+     VkSubmitInfo s{VK_STRUCTURE_TYPE_SUBMIT_INFO};s.commandBufferCount=1;s.pCommandBuffers=&cmd;
+     VkFenceCreateInfo f{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VkFence fence;check(vkCreateFence(device,&f,nullptr,&fence),"create fence");
+-    ++perf.submits;{PerfScope timing(perf.wait_ns);check(vkQueueSubmit(queue,1,&s,fence),"submit");check(vkWaitForFences(device,1,&fence,VK_TRUE,UINT64_MAX),"GPU completion");}
++    ++perf.submits;{PerfScope timing(perf.wait_ns);check(vkQueueSubmit(queue,1,&s,fence),"submit");VkResult wr=vkWaitForFences(device,1,&fence,VK_TRUE,20000000000ULL);if(wr!=VK_SUCCESS)check(wr,"GPU completion TIMEOUT after 20s (fence never signaled)");}
+     gpu_profile_retire(cmd);retire_legacy_rendering(cmd);vkDestroyFence(device,fence,nullptr);release_command(cmd);
+ }
+ VkFormat format(int f) {
+diff --git a/native/graphics/gpu_completion.inc b/native/graphics/gpu_completion.inc
+index 7cc3665..552ce97 100644
+--- a/native/graphics/gpu_completion.inc
++++ b/native/graphics/gpu_completion.inc
+@@ -55,7 +55,7 @@ uint64_t dependency_union_skips=0,dependency_union_checks=0;
+ void retire_gpu_batch(const std::shared_ptr<GpuBatch>& batch){
+     if(batch->retired)return;
+     FrameTraceScope trace("OT2 retire GPU batch");
+-    {FrameTraceScope wait_trace("OT2 ring fence wait");PerfScope timing(perf.wait_ns);check(vkWaitForFences(device,1,&batch->fence,VK_TRUE,UINT64_MAX),"GPU ring completion");}
++    {FrameTraceScope wait_trace("OT2 ring fence wait");PerfScope timing(perf.wait_ns);VkResult wr=vkWaitForFences(device,1,&batch->fence,VK_TRUE,20000000000ULL);if(wr!=VK_SUCCESS)check(wr,"GPU ring fence TIMEOUT after 20s (fence never signaled)");}
+     gpu_profile_retire(batch->command);retire_legacy_rendering(batch->command);
+     std::vector<uint64_t> prefix(batch->queries+1);
+     if(batch->queries){
+diff --git a/native/guest.cpp b/native/guest.cpp
+index 4bc2b9f..b09bbbf 100644
+--- a/native/guest.cpp
++++ b/native/guest.cpp
+@@ -119,7 +119,7 @@ GuestThread* create_thread_context() { return ot2_guest_context_create(); }
+ void install_handlers() {
+     struct sigaction action{}; action.sa_sigaction=ot2_signal_entry;
+     action.sa_flags=SA_SIGINFO|SA_ONSTACK|SA_NODEFER; sigemptyset(&action.sa_mask);
+-    for(int sig:{SIGTRAP,SIGSEGV,SIGBUS,SIGILL,SIGFPE}) if(sigaction(sig,&action,nullptr)) fail("Signal handler setup failed");
++    for(int sig:{SIGTRAP,SIGSEGV,SIGBUS,SIGILL,SIGFPE,SIGPROF}) if(sigaction(sig,&action,nullptr)) fail("Signal handler setup failed");
+ }
+ bool special(uint32_t instruction) {
+     auto op=instruction&~31U;
+@@ -205,8 +205,9 @@ void update_frame_rate(){
+ }
+ void svc(unsigned id,ucontext_t* uc,GuestThread* c) {
+     auto* r=uc->uc_mcontext.regs;
+-    static bool seen[256]{};
+-    if(id<256 && !seen[id]) { seen[id]=true; log("SVC 0x%x x0=%llx x1=%llx x2=%llx x3=%llx",id,r[0],r[1],r[2],r[3]); }
++    static std::atomic<unsigned long> svc_seq{0};
++    const unsigned long svc_n=svc_seq.fetch_add(1,std::memory_order_relaxed);
++    if(svc_n<400000) log("SVC#%lu 0x%x x0=%llx x1=%llx x2=%llx x3=%llx",svc_n,id,r[0],r[1],r[2],r[3]);
+     if(id==0x1e) { r[0]=ticks(); return; }
+     if(id==0x15 || id==0x51 || id==0x52) {
+         std::lock_guard lock(mapping_mutex);
+@@ -260,13 +261,13 @@ void svc(unsigned id,ucontext_t* uc,GuestThread* c) {
+     if(id==0x10) { r[0]=0; return; }
+     if(id==0x25) { r[0]=0;r[1]=c->handle;return; }
+     if(id==0x0c) { r[0]=0;r[1]=44;return; }
+-    if(id==0x0e) { r[0]=0;r[1]=0;r[2]=7;return; }
++    if(id==0x0e) { r[0]=0;r[1]=0;r[2]=1;return; }
+     if(id==0x27) { log("GUEST %.*s",int(std::min<uint64_t>(r[1],1600)),reinterpret_cast<char*>(r[0]));r[0]=0;return; }
+     if(id==0x29) {
+         std::lock_guard lock(mapping_mutex);
+         auto base=reinterpret_cast<uintptr_t>(address_space); uint64_t value=0;
+         switch(r[1]) {
+-        case 0:value=7;break; case 1:value=0xffffffffffffffffULL;break;
++        case 0:value=1;break; case 1:value=0xffffffffffffffffULL;break;
+         case 2:value=base+alias_offset;break; case 3:value=alias_size;break;
+         case 4:value=base+heap_offset;break; case 5:value=heap_capacity;break;
+         case 6:case 21:value=0xcd500000;break;
+@@ -499,6 +500,7 @@ extern "C" void dm_thread_enter(uint64_t entry,uint64_t argument,uint64_t stack_
+ }
+ extern "C" void ot2_signal_handler(int sig,siginfo_t* info,void* raw) {
+     auto* uc=static_cast<ucontext_t*>(raw);
++    if(sig==SIGPROF){ ot2_thread_record_sample(uc->uc_mcontext.pc); return; }
+     if(sig==SIGSEGV && (info->si_code==SEGV_ACCERR||info->si_code==SEGV_MAPERR)){
+         // Linux exposes the ARM64 data-abort ESR in the signal context. Only
+         // write faults may be handled by dirty tracking; never swallow execute
+@@ -673,7 +675,7 @@ void boot_game(const std::string& directory,const std::string& log_path,uint64_t
+     auto* c=create_thread_context();install_handlers();
+     address_space=static_cast<uint8_t*>(mmap(nullptr,reserve_size,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0));
+     if(address_space==MAP_FAILED) fail("Address space reserve failed");
+-    c->handle=svc_thread_main_init();thread_system_ready=true;
++    log("MAIN_INIT_BEGIN");c->handle=svc_thread_main_init();log("MAIN_INIT_DONE h=%#x",c->handle);thread_system_ready=true;
+     LoadedGame game(directory);active_game=&game;memory_registry_changed();images=game.modules();
+     for(const auto& m:images)if(m.name=="main")frame_rate_patch.configure(reinterpret_cast<uintptr_t>(m.base),m.size,m.build_id);
+     for(auto& m:images) { image_size+=m.size;patch(m.base+m.text_offset,m.text_size);log("Module %s base=%p size=%zu",m.name.c_str(),m.base,m.size); }
+diff --git a/native/probe.cpp b/native/probe.cpp
+index 5af6b4a..6c8a0e1 100644
+--- a/native/probe.cpp
++++ b/native/probe.cpp
+@@ -3,6 +3,7 @@
+ #include "text_input.h"
+ #include "guest.h"
+ #include "save_transaction.h"
++#include "thread_services.h"
+ #include <jni.h>
+ #include <android/native_window_jni.h>
+ #include "graphics/backend.h"
+@@ -238,7 +239,7 @@ extern "C" JNIEXPORT void JNICALL Java_dev_ot2_port_MainActivity_setNativeSurfac
+ }
+ 
+ extern "C" JNIEXPORT jlong JNICALL Java_dev_ot2_port_MainActivity_getNativeFrameCount(JNIEnv*,jclass) {return vkhost_frame_count();}
+-extern "C" JNIEXPORT jdoubleArray JNICALL Java_dev_ot2_port_MainActivity_getNativeFrameStats(JNIEnv* env,jclass){double values[4];vkhost_frame_stats(values);auto result=env->NewDoubleArray(4);if(result)env->SetDoubleArrayRegion(result,0,4,values);return result;}
++extern "C" JNIEXPORT jdoubleArray JNICALL Java_dev_ot2_port_MainActivity_getNativeFrameStats(JNIEnv* env,jclass){ot2_thread_dump_state();double values[4];vkhost_frame_stats(values);auto result=env->NewDoubleArray(4);if(result)env->SetDoubleArrayRegion(result,0,4,values);return result;}
+ extern "C" JNIEXPORT jint JNICALL Java_dev_ot2_port_MainActivity_setNativeTargetFps(JNIEnv*,jclass,jint fps){ot2::set_frame_rate_target(fps);return ot2::frame_rate_applied();}
+ 
+ extern "C" JNIEXPORT void JNICALL Java_dev_ot2_port_MainActivity_setNativeFocus(JNIEnv*,jclass,jint state) {
+diff --git a/native/thread_services.c b/native/thread_services.c
+index 8bed6be..79a35d1 100644
+--- a/native/thread_services.c
++++ b/native/thread_services.c
+@@ -43,6 +43,7 @@ typedef struct thr {
+     struct thr *next;          // 等待链 | Wait chain
+     struct thr *all;           // 全部线程链（现场导出用） | All-threads chain (for the state dump)
+     int last_svc; uint64_t last_lr;
++    volatile uintptr_t sample_pc;   // SIGPROF 采样：被打断时的 PC
+     int closed;                // 句柄已关：与 exited 同时成立才释放对象（Horizon：线程对象随最后一个引用消失） | Handle closed: the object is freed only when this holds together with exited (Horizon: the thread object goes away with the last reference)
+     uint64_t nsvc;             // SVC 次数（现场导出用） | SVC count (for the state dump)
+     uint32_t mport;         // 宿主线程端口（取 CPU 时间） | Host thread port (to get CPU time)
+@@ -51,6 +52,9 @@ typedef struct thr {
+ static thr_t *g_all;
+ 
+ static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
++static uintptr_t g_G_holder;
++#define LOCK_G() do { pthread_mutex_lock(&G); thr_t* _gt=(thr_t*)pthread_getspecific(g_keythr); __atomic_store_n(&g_G_holder,_gt?(uintptr_t)_gt->handle:0,__ATOMIC_RELEASE); } while(0)
++#define UNLOCK_G() do { __atomic_store_n(&g_G_holder,0,__ATOMIC_RELEASE); pthread_mutex_unlock(&G); } while(0)
+ #define MAX_H 4096
+ static struct { int type; void *obj; } g_h[MAX_H];
+ static pthread_key_t g_keythr;
+@@ -157,10 +161,13 @@ void crash_thread_init(void);
+ void guest_thread_init(void);   // thread.c：每线程 TSD 槽（门、x18、TLS、TLR）唯一设置点 | thread.c: the single place that sets the per-thread TSD slots (gate, x18, TLS, TLR)
+ static void *thread_main(void *p) {
+     thr_t *t = p;
++    LOG("THREAD_MAIN enter h=%#x", t->handle);
+     pthread_setspecific(g_keythr, t);
+     crash_thread_init();
+     guest_thread_init();
+-    pthread_mutex_lock(&G); while (!t->started) pthread_cond_wait(&t->cv, &G); pthread_mutex_unlock(&G);
++    LOG("THREAD_MAIN init done h=%#x started=%d", t->handle, t->started);
++    LOCK_G(); while (!t->started) pthread_cond_wait(&t->cv, &G); UNLOCK_G();
++    LOG("THREAD_MAIN enter guest h=%#x entry=%#llx", t->handle, (unsigned long long)t->entry);
+     dm_thread_enter(t->entry, t->arg, t->stack_top);   // 不返回：客体须经 ExitThread 退出 | Does not return: the guest must exit through ExitThread
+     die("客体线程入口返回");
+ }
+@@ -173,25 +180,73 @@ void svc_thread_exit_on_host(void) {
+     t->exit_ns = now_ns(); t->exit_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
+     // 这里不打日志：退出发生在客体线程自己的栈上（有的只有十几 KiB），带浮点的 printf 会把栈撑爆（真机冒烟：LibcurlResolver 退出时 SIGBUS，回溯 fprintf → __dtoa）。时刻只记下来，现场导出时再打
+     // No logging here: the exit happens on the guest thread's own stack (some are only a dozen or so KiB), and a printf with floating point would blow the stack (real-device smoke test: SIGBUS when LibcurlResolver exits, backtrace fprintf → __dtoa). Only the time is recorded, and it is printed later in the state dump
+-    pthread_mutex_lock(&G);
++    LOCK_G();
+     t->exited = 1;
+     for (thr_t *w = g_wait; w; ) { thr_t *n = w->next; if (w->wkind == 4) wake(w, -1); w = n; }   // 同步等待者重查 | Synchronization waiters re-check
+     pthread_setspecific(g_keythr, NULL);
+     if (t->closed) thr_free(t);
+-    pthread_mutex_unlock(&G);
++    UNLOCK_G();
+     pthread_exit(NULL);
+ }
+ void dm_thread_returned(void) { die("客体线程入口函数返回（Horizon 要求 ExitThread）"); }
+ 
+ // 主线程登记，返回其句柄（交给 nnosInitialize 作主线程句柄）
+ // Register the main thread and return its handle (passed to nnosInitialize as the main thread handle)
++static void* watchdog_main(void* arg) {
++    (void)arg;
++    for (int i = 0; i < 12; i++) {
++        struct timespec ts = {5, 0}; nanosleep(&ts, NULL);
++        if (pthread_mutex_trylock(&G) != 0) {
++            LOG("=== WATCHDOG %d G_BUSY holder=%#llx ===", i, (unsigned long long)__atomic_load_n(&g_G_holder,__ATOMIC_ACQUIRE));
++            continue;
++        }
++        LOG("=== WATCHDOG %d ===", i);
++        for (thr_t *t = g_all; t; t = t->all)
++            LOG("THR h=%#x id=%llu st=%d ex=%d wk=%d wkey=%#llx waddr=%#llx wtag=%#x svc=%#x lr=%#llx n=%llu",
++                t->handle, (unsigned long long)t->id, t->started, t->exited, t->wkind,
++                (unsigned long long)t->wkey, (unsigned long long)t->waddr, t->wtag,
++                t->last_svc, (unsigned long long)t->last_lr, (unsigned long long)t->nsvc);
++        pthread_mutex_unlock(&G);
++    }
++    return NULL;
++}
++void ot2_thread_dump_state(void) {
++    static int calls;
++    if (calls++ > 40) return;
++    if (pthread_mutex_trylock(&G) != 0) {
++        LOG("=== STATE_DUMP %d G_BUSY holder=%#x ===", calls, (unsigned)__atomic_load_n(&g_G_holder,__ATOMIC_ACQUIRE));
++        return;
++    }
++    for (thr_t *t = g_all; t; t = t->all) if (t->pt) pthread_kill(t->pt, SIGPROF);
++    pthread_mutex_unlock(&G);
++    usleep(8000);
++    if (pthread_mutex_trylock(&G) != 0) { LOG("=== STATE_DUMP %d G_BUSY2 ===", calls); return; }
++    LOG("=== STATE_DUMP %d ===", calls);
++    for (thr_t *t = g_all; t; t = t->all)
++        LOG("THR h=%#x id=%llu st=%d ex=%d wk=%d wkey=%#llx waddr=%#llx wtag=%#x svc=%#x lr=%#llx pc=%#llx n=%llu",
++            t->handle, (unsigned long long)t->id, t->started, t->exited, t->wkind,
++            (unsigned long long)t->wkey, (unsigned long long)t->waddr, t->wtag,
++            t->last_svc, (unsigned long long)t->last_lr, (unsigned long long)t->sample_pc, (unsigned long long)t->nsvc);
++    pthread_mutex_unlock(&G);
++}
++void ot2_thread_record_sample(uintptr_t pc) {
++    thr_t* t = (thr_t*)pthread_getspecific(g_keythr);
++    if (t) t->sample_pc = pc;
++}
+ uint32_t svc_thread_main_init(void) {
++    static int watchdog_started;
++    if (!watchdog_started) {
++        watchdog_started = 1; pthread_t w;
++        int wrc = pthread_create(&w, NULL, watchdog_main, NULL);
++        if (!wrc) pthread_detach(w);
++        LOG("WATCHDOG_START rc=%d", wrc);
++    }
+     pthread_once(&g_key_once,create_thread_key);
+     if(pthread_getspecific(g_keythr))return cur()->handle;
+     thr_t *t = calloc(1, sizeof *t);
+     init_condition(&t->cv);
+-    t->started = 1; t->prio = 44; t->core = 0; t->mask = 7; t->pt = pthread_self();
+-    pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
++    t->started = 1; t->prio = 44; t->core = 0; t->mask = 1; t->pt = pthread_self();
++    LOCK_G(); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; UNLOCK_G();
+     pthread_setspecific(g_keythr, t);
+     return t->handle;
+ }
+@@ -213,18 +268,18 @@ static void wake_sync_waiters(void) {
+ static int64_t now_mono_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec * 1000000000ll + ts.tv_nsec; }
+ void dm_guest_clock_advanced(void) {
+     if (!dm_detclock_enabled()) return;
+-    pthread_mutex_lock(&G);
++    LOCK_G();
+     for (thr_t *t = g_wait; t; t = t->next) if (t->wkind) pthread_cond_signal(&t->cv);
+-    pthread_mutex_unlock(&G);
++    UNLOCK_G();
+ }
+ 
+ // 处理线程 / 同步类 SVC；返回 1 = 已处理
+ // Handle thread / synchronization SVCs; returns 1 = handled
+ int ot2_signal_event(uint32_t handle) {
+-    pthread_mutex_lock(&G);
++    LOCK_G();
+     event_t* event=h_peek(handle,O_EVENT_W);
+     if(event){event->signaled=1;wake_sync_waiters();}
+-    pthread_mutex_unlock(&G);
++    UNLOCK_G();
+     return event!=NULL;
+ }
+ int svc_thread(int num, uint64_t *regs) {
+@@ -235,21 +290,22 @@ int svc_thread(int num, uint64_t *regs) {
+         thr_t *t = calloc(1, sizeof *t);
+         init_condition(&t->cv);
+         t->entry = regs[1]; t->arg = regs[2]; t->stack_top = regs[3] & ~0xFull;
+-        t->prio = (int)regs[4]; t->core = (int)regs[5]; t->mask = t->core >= 0 ? 1ull << t->core : 7;
++        t->prio = (int)regs[4]; t->core = (int)regs[5]; t->mask = t->core >= 0 ? 1ull << t->core : 1;
+         t->born_ns = now_ns(); t->born_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
+-        pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
++        LOCK_G(); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; UNLOCK_G();
+         pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 1 << 20);
+         pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);   // 退出即回收宿主资源（客体经句柄等待，不 join） | Host resources are reclaimed on exit (the guest waits through the handle, no join)
+         if (pthread_create(&t->pt, &a, thread_main, t)) die("pthread_create");
+         pthread_attr_destroy(&a);
+-        if (0) LOG("CreateThread h=%#x entry=%#llx arg=%#llx sp=%#llx prio=%d core=%d", t->handle, t->entry, t->arg, t->stack_top, t->prio, t->core);
++        LOG("CREATE_THREAD h=%#x entry=%#llx arg=%#llx sp=%#llx prio=%d core=%d", t->handle, t->entry, t->arg, t->stack_top, t->prio, t->core);
+         regs[0] = 0; regs[1] = t->handle; return 1;
+     }
+     case 0x09: {  // StartThread(w0)
+-        pthread_mutex_lock(&G);
++        LOCK_G();
+         thr_t *t = h_get((uint32_t)regs[0], O_THREAD);
++        LOG("START_THREAD h=%#x found=%d", (uint32_t)regs[0], t ? 1 : 0);
+         if (t) { t->started = 1; pthread_cond_signal(&t->cv); }
+-        pthread_mutex_unlock(&G);
++        UNLOCK_G();
+         regs[0] = t ? 0 : R_BAD_HANDLE; return 1;
+     }
+     case 0x0A: guest_thread_exit(); return 1;
+@@ -262,30 +318,30 @@ int svc_thread(int num, uint64_t *regs) {
+         else sched_yield();
+         return 1;
+     }
+-    case 0x0C: { pthread_mutex_lock(&G);thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)t->prio : 0; pthread_mutex_unlock(&G);return 1; }
+-    case 0x0D: { pthread_mutex_lock(&G);thr_t *t = h_get((uint32_t)regs[0], O_THREAD); if (t) t->prio = (int)regs[1]; regs[0] = t ? 0 : R_BAD_HANDLE; pthread_mutex_unlock(&G);return 1; }
+-    case 0x0E: { pthread_mutex_lock(&G);thr_t *t = h_get((uint32_t)regs[2], O_THREAD);
+-                 regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)(uint32_t)t->core : 0; regs[2] = t ? t->mask : 0; pthread_mutex_unlock(&G);return 1; }
++    case 0x0C: { LOCK_G();thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)t->prio : 0; UNLOCK_G();return 1; }
++    case 0x0D: { LOCK_G();thr_t *t = h_get((uint32_t)regs[0], O_THREAD); if (t) t->prio = (int)regs[1]; regs[0] = t ? 0 : R_BAD_HANDLE; UNLOCK_G();return 1; }
++    case 0x0E: { LOCK_G();thr_t *t = h_get((uint32_t)regs[2], O_THREAD);
++                 regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)(uint32_t)t->core : 0; regs[2] = t ? t->mask : 0; UNLOCK_G();return 1; }
+     case 0x0F: {  // SetThreadCoreMask(w0, w1 理想核, x2 掩码)：-1 = 用进程缺省、-2/-3 = 不改理想核；宿主只记账 | SetThreadCoreMask(w0, w1 ideal core, x2 mask): -1 = use the process default, -2/-3 = leave the ideal core unchanged; the host only keeps the bookkeeping
+-        pthread_mutex_lock(&G);thr_t *t = h_get((uint32_t)regs[0], O_THREAD);
++        LOCK_G();thr_t *t = h_get((uint32_t)regs[0], O_THREAD);
+         if (t) { int c = (int)regs[1]; if (c >= 0) t->core = c; else if (c == -1) t->core = 0; if (regs[2]) t->mask = regs[2]; }
+-        regs[0] = t ? 0 : R_BAD_HANDLE; pthread_mutex_unlock(&G);return 1;
++        regs[0] = t ? 0 : R_BAD_HANDLE; UNLOCK_G();return 1;
+     }
+     case 0x10: regs[0] = (uint64_t)(uint32_t)cur()->core; return 1;
+-    case 0x25: { pthread_mutex_lock(&G);thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? t->id : 0; pthread_mutex_unlock(&G);return 1; }
++    case 0x25: { LOCK_G();thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? t->id : 0; UNLOCK_G();return 1; }
+ 
+     case 0x1A: {  // ArbitrateLock(w0 持有者句柄, x1 地址, w2 本线程标签) | ArbitrateLock(w0 owner handle, x1 address, w2 this thread's tag)
+         thr_t *t = cur(); uint64_t addr = regs[1];
+-        pthread_mutex_lock(&G);
++        LOCK_G();
+         int64_t r = 0;
+         if (ld32(addr) == ((uint32_t)regs[0] | WAITERS_BIT)) { t->waddr = addr; t->wtag = (uint32_t)regs[2]; r = block(t, 1, -1); }
+-        pthread_mutex_unlock(&G);
++        UNLOCK_G();
+         regs[0] = (uint64_t)r; return 1;
+     }
+-    case 0x1B: pthread_mutex_lock(&G); lock_handoff(regs[0]); pthread_mutex_unlock(&G); regs[0] = 0; return 1;
++    case 0x1B: LOCK_G(); lock_handoff(regs[0]); UNLOCK_G(); regs[0] = 0; return 1;
+     case 0x1C: {  // WaitProcessWideKeyAtomic(x0 锁地址, x1 条件键, w2 标签, x3 超时) | WaitProcessWideKeyAtomic(x0 lock address, x1 condition key, w2 tag, x3 timeout)
+         thr_t *t = cur(); uint64_t addr = regs[0], key = regs[1];
+-        pthread_mutex_lock(&G);
++        LOCK_G();
+         // 顺序要紧：先置条件键 = 1，再放互斥锁。SDK 的 InternalConditionVariable::Signal 在用户态先读条件键、为 0 就不发 svc 0x1D；
+         // 用户态抢互斥锁也不经过 G。原先先 lock_handoff 后置键：放锁后、置键前，别的线程可在用户态抢到锁、改完条件、读到键 0 就不唤醒，
+         // 本线程随后挂上去永远等不到（并行负载下资源表读写锁 main+0x320e5e0 卡死：读者计数 0、锁空闲、写者条件键 1、写者仍在等）。
+@@ -309,33 +365,33 @@ int svc_thread(int num, uint64_t *regs) {
+         t->wkey = key; t->waddr = addr; t->wtag = (uint32_t)regs[2];
+ #endif
+         int64_t r = block(t, 2, (int64_t)regs[3]);   // 超时：不重新拿锁（用户态自己拿） | Timeout: the lock is not re-acquired (user mode takes it itself)
+-        pthread_mutex_unlock(&G);
++        UNLOCK_G();
+         regs[0] = (uint64_t)r; return 1;
+     }
+     case 0x1D: {  // SignalProcessWideKey(x0 条件键, w1 个数，<=0 全部) | SignalProcessWideKey(x0 condition key, w1 count, <=0 all)
+         uint64_t key = regs[0]; int cnt = (int)regs[1], n = 0;
+-        pthread_mutex_lock(&G);
++        LOCK_G();
+         for (thr_t *w; (cnt <= 0 || n < cnt) && (w = pick(2, key)); n++) lock_acquire_for(w, w->waddr, w->wtag);   // 按内核顺序；转为锁等待或被唤醒后不再是 kind 2 | In kernel order; once turned into a lock wait or woken it is no longer kind 2
+         int left = 0; for (thr_t *w = g_wait; w; w = w->next) if (w->wkind == 2 && w->wkey == key) { left = 1; break; }
+         if (!left) st32(key, 0);
+-        pthread_mutex_unlock(&G);
++        UNLOCK_G();
+         regs[0] = 0; return 1;
+     }
+ 
+     case 0x34: {  // WaitForAddress(x0 地址, w1 类型, w2 值, x3 超时)：0 小于则等、1 小于则减一再等、2 相等则等 | WaitForAddress(x0 address, w1 type, w2 value, x3 timeout): 0 wait if less than, 1 decrement if less than then wait, 2 wait if equal
+         thr_t *t = cur(); uint64_t addr = regs[0]; int type = (int)regs[1]; int32_t val = (int32_t)regs[2];
+-        pthread_mutex_lock(&G);
++        LOCK_G();
+         int64_t r; uint32_t v = ld32(addr);
+         int ok = type == 2 ? (int32_t)v == val : (int32_t)v < val;
+         if (ok && type == 1) { while (!cas32(addr, &v, v - 1)) if (!((int32_t)v < val)) { ok = 0; break; } }
+         if (!ok) r = R_BAD_STATE;
+         else { t->waddr = addr; r = block(t, 3, (int64_t)regs[3]); }
+-        pthread_mutex_unlock(&G);
++        UNLOCK_G();
+         regs[0] = (uint64_t)r; return 1;
+     }
+     case 0x35: {  // SignalToAddress(x0 地址, w1 类型, w2 值, w3 个数)：0 唤醒、1 相等则加一并唤醒、2 相等则按等待数改值并唤醒 | SignalToAddress(x0 address, w1 type, w2 value, w3 count): 0 wake, 1 increment if equal and wake, 2 if equal modify the value by waiter count and wake
+         uint64_t addr = regs[0]; int type = (int)regs[1]; int32_t val = (int32_t)regs[2]; int cnt = (int)regs[3];
+-        pthread_mutex_lock(&G);
++        LOCK_G();
+         int nw = 0; for (thr_t *w = g_wait; w; w = w->next) if (w->wkind == 3 && w->waddr == addr) nw++;
+         int64_t r = 0;
+         if (type != 0) {
+@@ -349,17 +405,17 @@ int svc_thread(int num, uint64_t *regs) {
+         }
+         if (!r) { int n = 0;
+             for (thr_t *w; (cnt <= 0 || n < cnt) && (w = pick(3, addr)); n++) wake(w, 0); }
+-        pthread_mutex_unlock(&G);
++        UNLOCK_G();
+         regs[0] = (uint64_t)r; return 1;
+     }
+ 
+     case 0x45: {  // CreateEvent(→w1 写端, w2 读端) | CreateEvent(→w1 write end, w2 read end)
+         event_t *e = calloc(1, sizeof *e); e->refs = 2;
+-        pthread_mutex_lock(&G); uint32_t hw = h_new(O_EVENT_W, e), hr = h_new(O_EVENT_R, e); pthread_mutex_unlock(&G);
++        LOCK_G(); uint32_t hw = h_new(O_EVENT_W, e), hr = h_new(O_EVENT_R, e); UNLOCK_G();
+         regs[0] = 0; regs[1] = hw; regs[2] = hr; return 1;
+     }
+     case 0x11: case 0x12: case 0x17: {  // SignalEvent(写端) / ClearEvent(任一端) / ResetSignal(读端，未触发报错) | SignalEvent(write end) / ClearEvent(either end) / ResetSignal(read end, error if not signaled)
+-        pthread_mutex_lock(&G);
++        LOCK_G();
+         // SignalEvent 只认写端；ClearEvent 两端都认；ResetSignal 只认读端
+         // SignalEvent accepts only the write end; ClearEvent accepts both ends; ResetSignal accepts only the read end
+         uint32_t h = (uint32_t)regs[0];
+@@ -371,13 +427,13 @@ int svc_thread(int num, uint64_t *regs) {
+         else if (num == 0x11) { e->signaled = 1; wake_sync_waiters(); }
+         else if (num == 0x17 && !e->signaled) r = R_BAD_STATE;
+         else e->signaled = 0;
+-        pthread_mutex_unlock(&G);
++        UNLOCK_G();
+         regs[0] = (uint64_t)r; return 1;
+     }
+     case 0x18: {  // WaitSynchronization(→w1 下标; x1 句柄数组, w2 个数, x3 超时) | WaitSynchronization(→w1 index; x1 handle array, w2 count, x3 timeout)
+         thr_t *t = cur(); const uint32_t *hs = (const uint32_t *)regs[1]; int n = (int)regs[2]; int64_t ns = (int64_t)regs[3];
+         int64_t deadline = ns > 0 ? (dm_detclock_enabled() ? (int64_t)guest_ns() : now_mono_ns()) + ns : 0;
+-        pthread_mutex_lock(&G);
++        LOCK_G();
+         int64_t r; int idx = -1;
+         for (;;) {
+             if (t->cancel) { t->cancel = 0; r = R_CANCELLED; break; }
+@@ -389,14 +445,14 @@ int svc_thread(int num, uint64_t *regs) {
+             if (ns > 0 && left <= 0) { r = R_TIMEOUT; break; }
+             if (block(t, 4, left) == R_TIMEOUT) { r = R_TIMEOUT; break; }
+         }
+-        pthread_mutex_unlock(&G);
++        UNLOCK_G();
+         regs[0] = (uint64_t)r; regs[1] = idx >= 0 ? (uint64_t)idx : 0; return 1;
+     }
+     case 0x19: {  // CancelSynchronization(w0 线程) | CancelSynchronization(w0 thread)
+-        pthread_mutex_lock(&G);
++        LOCK_G();
+         thr_t *t = h_get((uint32_t)regs[0], O_THREAD);
+         if (t) { t->cancel = 1; if (t->wkind == 4) wake(t, -1); }
+-        pthread_mutex_unlock(&G);
++        UNLOCK_G();
+         regs[0] = t ? 0 : R_BAD_HANDLE; return 1;
+     }
+     case 0x15: { // Same-process transfer memory with real shared backing.
+@@ -406,17 +462,17 @@ int svc_thread(int num, uint64_t *regs) {
+         if(m->fd<0 || ftruncate(m->fd,m->size))die("Transfer-memory backing failed");
+         if(pwrite(m->fd,m->source,m->size,0)!=(ssize_t)m->size)die("Transfer-memory initialization failed");
+         if(mmap(m->source,m->size,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_FIXED,m->fd,0)==MAP_FAILED)die("Transfer-memory source map failed");
+-        pthread_mutex_lock(&G);regs[1]=h_new(O_TRANSFER,m);pthread_mutex_unlock(&G);regs[0]=0;return 1;
++        LOCK_G();regs[1]=h_new(O_TRANSFER,m);UNLOCK_G();regs[0]=0;return 1;
+     }
+     case 0x51: case 0x52: {
+-        pthread_mutex_lock(&G);transfer_t* m=h_peek((uint32_t)regs[0],O_TRANSFER);
+-        if(!m || regs[2]!=m->size || (regs[1]&4095)){pthread_mutex_unlock(&G);regs[0]=m?0xd401:R_BAD_HANDLE;return 1;}
++        LOCK_G();transfer_t* m=h_peek((uint32_t)regs[0],O_TRANSFER);
++        if(!m || regs[2]!=m->size || (regs[1]&4095)){UNLOCK_G();regs[0]=m?0xd401:R_BAD_HANDLE;return 1;}
+         int flags=num==0x51?MAP_SHARED|MAP_FIXED:MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED;
+         void* result=mmap((void*)regs[1],m->size,num==0x51?PROT_READ|PROT_WRITE:PROT_NONE,flags,num==0x51?m->fd:-1,0);
+-        pthread_mutex_unlock(&G);regs[0]=result==MAP_FAILED?R_OUT_OF_RES:0;return 1;
++        UNLOCK_G();regs[0]=result==MAP_FAILED?R_OUT_OF_RES:0;return 1;
+     }
+     case 0x16: {  // CloseHandle(w0)：事件两端都关才释放；线程句柄关闭后槽位回收，对象在线程也退出后释放 | CloseHandle(w0): an event is freed only when both ends are closed; after a thread handle is closed the slot is recycled, and the object is freed once the thread has also exited
+-        pthread_mutex_lock(&G);
++        LOCK_G();
+         unsigned i = (uint32_t)regs[0] - 0x1000;
+         if (i > 0 && i < MAX_H && (g_h[i].type == O_EVENT_R || g_h[i].type == O_EVENT_W)) {
+             event_t *e = g_h[i].obj; if (--e->refs == 0) free(e);
+@@ -429,7 +485,7 @@ int svc_thread(int num, uint64_t *regs) {
+             t->closed = 1;
+             if (t->exited) thr_free(t);
+         }
+-        pthread_mutex_unlock(&G);
++        UNLOCK_G();
+         regs[0] = 0; return 1;
+     }
+     }
+@@ -438,6 +494,6 @@ int svc_thread(int num, uint64_t *regs) {
+ 
+ 
+ #ifdef OT2_THREAD_TESTING
+-size_t ot2_thread_test_objects(void){pthread_mutex_lock(&G);size_t n=0;for(thr_t* t=g_all;t;t=t->all)n++;pthread_mutex_unlock(&G);return n;}
+-size_t ot2_thread_test_waiters(int kind,uint64_t address){pthread_mutex_lock(&G);size_t n=0;for(thr_t* t=g_wait;t;t=t->next)if(t->wkind==kind&&(!address||t->waddr==address))n++;pthread_mutex_unlock(&G);return n;}
++size_t ot2_thread_test_objects(void){LOCK_G();size_t n=0;for(thr_t* t=g_all;t;t=t->all)n++;UNLOCK_G();return n;}
++size_t ot2_thread_test_waiters(int kind,uint64_t address){LOCK_G();size_t n=0;for(thr_t* t=g_wait;t;t=t->next)if(t->wkind==kind&&(!address||t->waddr==address))n++;UNLOCK_G();return n;}
+ #endif
+diff --git a/native/thread_services.h b/native/thread_services.h
+index 4e52854..22345bd 100644
+--- a/native/thread_services.h
++++ b/native/thread_services.h
+@@ -13,6 +13,8 @@ __attribute__((noreturn)) void guest_thread_exit(void);
+ __attribute__((noreturn)) void svc_thread_exit_on_host(void);
+ void crash_thread_init(void);
+ void dm_thread_enter(uint64_t entry,uint64_t argument,uint64_t stack_top);
++void ot2_thread_dump_state(void);
++void ot2_thread_record_sample(uintptr_t pc);
+ uint64_t ot2_call_guest(const char* symbol,const uint64_t* arguments);
+ uint64_t ot2_call_guest_address(uint64_t address,const uint64_t* arguments);
+ uint64_t ot2_guest_symbol_address(const char* symbol);
+-- 
+2.50.1 (Apple Git-155)
+
