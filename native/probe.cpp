@@ -3,6 +3,7 @@
 #include "text_input.h"
 #include "guest.h"
 #include "save_transaction.h"
+#include "thread_services.h"
 #include <jni.h>
 #include <android/native_window_jni.h>
 #include "graphics/backend.h"
@@ -238,7 +239,7 @@ extern "C" JNIEXPORT void JNICALL Java_dev_ot2_port_MainActivity_setNativeSurfac
 }
 
 extern "C" JNIEXPORT jlong JNICALL Java_dev_ot2_port_MainActivity_getNativeFrameCount(JNIEnv*,jclass) {return vkhost_frame_count();}
-extern "C" JNIEXPORT jdoubleArray JNICALL Java_dev_ot2_port_MainActivity_getNativeFrameStats(JNIEnv* env,jclass){double values[4];vkhost_frame_stats(values);auto result=env->NewDoubleArray(4);if(result)env->SetDoubleArrayRegion(result,0,4,values);return result;}
+extern "C" JNIEXPORT jdoubleArray JNICALL Java_dev_ot2_port_MainActivity_getNativeFrameStats(JNIEnv* env,jclass){ot2_thread_dump_state();double values[4];vkhost_frame_stats(values);auto result=env->NewDoubleArray(4);if(result)env->SetDoubleArrayRegion(result,0,4,values);return result;}
 extern "C" JNIEXPORT jint JNICALL Java_dev_ot2_port_MainActivity_setNativeTargetFps(JNIEnv*,jclass,jint fps){ot2::set_frame_rate_target(fps);return ot2::frame_rate_applied();}
 
 extern "C" JNIEXPORT void JNICALL Java_dev_ot2_port_MainActivity_setNativeFocus(JNIEnv*,jclass,jint state) {

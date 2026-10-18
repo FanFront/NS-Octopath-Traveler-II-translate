@@ -13,6 +13,8 @@ __attribute__((noreturn)) void guest_thread_exit(void);
 __attribute__((noreturn)) void svc_thread_exit_on_host(void);
 void crash_thread_init(void);
 void dm_thread_enter(uint64_t entry,uint64_t argument,uint64_t stack_top);
+void ot2_thread_dump_state(void);
+void ot2_thread_record_sample(uintptr_t pc);
 uint64_t ot2_call_guest(const char* symbol,const uint64_t* arguments);
 uint64_t ot2_call_guest_address(uint64_t address,const uint64_t* arguments);
 uint64_t ot2_guest_symbol_address(const char* symbol);

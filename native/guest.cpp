@@ -119,7 +119,7 @@ GuestThread* create_thread_context() { return ot2_guest_context_create(); }
 void install_handlers() {
     struct sigaction action{}; action.sa_sigaction=ot2_signal_entry;
     action.sa_flags=SA_SIGINFO|SA_ONSTACK|SA_NODEFER; sigemptyset(&action.sa_mask);
-    for(int sig:{SIGTRAP,SIGSEGV,SIGBUS,SIGILL,SIGFPE}) if(sigaction(sig,&action,nullptr)) fail("Signal handler setup failed");
+    for(int sig:{SIGTRAP,SIGSEGV,SIGBUS,SIGILL,SIGFPE,SIGPROF}) if(sigaction(sig,&action,nullptr)) fail("Signal handler setup failed");
 }
 bool special(uint32_t instruction) {
     auto op=instruction&~31U;
@@ -205,8 +205,9 @@ void update_frame_rate(){
 }
 void svc(unsigned id,ucontext_t* uc,GuestThread* c) {
     auto* r=uc->uc_mcontext.regs;
-    static bool seen[256]{};
-    if(id<256 && !seen[id]) { seen[id]=true; log("SVC 0x%x x0=%llx x1=%llx x2=%llx x3=%llx",id,r[0],r[1],r[2],r[3]); }
+    static std::atomic<unsigned long> svc_seq{0};
+    const unsigned long svc_n=svc_seq.fetch_add(1,std::memory_order_relaxed);
+    if(svc_n<400000) log("SVC#%lu 0x%x x0=%llx x1=%llx x2=%llx x3=%llx",svc_n,id,r[0],r[1],r[2],r[3]);
     if(id==0x1e) { r[0]=ticks(); return; }
     if(id==0x15 || id==0x51 || id==0x52) {
         std::lock_guard lock(mapping_mutex);
@@ -260,13 +261,13 @@ void svc(unsigned id,ucontext_t* uc,GuestThread* c) {
     if(id==0x10) { r[0]=0; return; }
     if(id==0x25) { r[0]=0;r[1]=c->handle;return; }
     if(id==0x0c) { r[0]=0;r[1]=44;return; }
-    if(id==0x0e) { r[0]=0;r[1]=0;r[2]=7;return; }
+    if(id==0x0e) { r[0]=0;r[1]=0;r[2]=1;return; }
     if(id==0x27) { log("GUEST %.*s",int(std::min<uint64_t>(r[1],1600)),reinterpret_cast<char*>(r[0]));r[0]=0;return; }
     if(id==0x29) {
         std::lock_guard lock(mapping_mutex);
         auto base=reinterpret_cast<uintptr_t>(address_space); uint64_t value=0;
         switch(r[1]) {
-        case 0:value=7;break; case 1:value=0xffffffffffffffffULL;break;
+        case 0:value=1;break; case 1:value=0xffffffffffffffffULL;break;
         case 2:value=base+alias_offset;break; case 3:value=alias_size;break;
         case 4:value=base+heap_offset;break; case 5:value=heap_capacity;break;
         case 6:case 21:value=0xcd500000;break;
@@ -499,6 +500,7 @@ extern "C" void dm_thread_enter(uint64_t entry,uint64_t argument,uint64_t stack_
 }
 extern "C" void ot2_signal_handler(int sig,siginfo_t* info,void* raw) {
     auto* uc=static_cast<ucontext_t*>(raw);
+    if(sig==SIGPROF){ ot2_thread_record_sample(uc->uc_mcontext.pc); return; }
     if(sig==SIGSEGV && (info->si_code==SEGV_ACCERR||info->si_code==SEGV_MAPERR)){
         // Linux exposes the ARM64 data-abort ESR in the signal context. Only
         // write faults may be handled by dirty tracking; never swallow execute
@@ -673,7 +675,7 @@ void boot_game(const std::string& directory,const std::string& log_path,uint64_t
     auto* c=create_thread_context();install_handlers();
     address_space=static_cast<uint8_t*>(mmap(nullptr,reserve_size,PROT_NONE,MAP_PRIVATE|MAP_ANONYMOUS,-1,0));
     if(address_space==MAP_FAILED) fail("Address space reserve failed");
-    c->handle=svc_thread_main_init();thread_system_ready=true;
+    log("MAIN_INIT_BEGIN");c->handle=svc_thread_main_init();log("MAIN_INIT_DONE h=%#x",c->handle);thread_system_ready=true;
     LoadedGame game(directory);active_game=&game;memory_registry_changed();images=game.modules();
     for(const auto& m:images)if(m.name=="main")frame_rate_patch.configure(reinterpret_cast<uintptr_t>(m.base),m.size,m.build_id);
     for(auto& m:images) { image_size+=m.size;patch(m.base+m.text_offset,m.text_size);log("Module %s base=%p size=%zu",m.name.c_str(),m.base,m.size); }

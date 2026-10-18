@@ -254,6 +254,8 @@ public final class MainActivity extends Activity implements InputManager.InputDe
             FrameLayout.LayoutParams hudParams=new FrameLayout.LayoutParams(-2,-2,android.view.Gravity.TOP|android.view.Gravity.START);
             int margin=Math.round(12*getResources().getDisplayMetrics().density);
             hudParams.setMargins(margin,margin,margin,margin);root.addView(performanceHud,hudParams);
+            performanceHud.setOnClickListener(v->performanceHud.setVisibility(View.GONE));
+            root.postDelayed(()->{if(performanceHud!=null&&!isDestroyed())performanceHud.setVisibility(View.GONE);},6000);
             performanceHud.setOnApplyWindowInsetsListener((view,insets)->{
                 android.graphics.Insets safe=insets.getInsets(android.view.WindowInsets.Type.displayCutout());
                 FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)view.getLayoutParams();

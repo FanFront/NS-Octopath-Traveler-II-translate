@@ -43,6 +43,7 @@ typedef struct thr {
     struct thr *next;          // 等待链 | Wait chain
     struct thr *all;           // 全部线程链（现场导出用） | All-threads chain (for the state dump)
     int last_svc; uint64_t last_lr;
+    volatile uintptr_t sample_pc;   // SIGPROF 采样：被打断时的 PC
     int closed;                // 句柄已关：与 exited 同时成立才释放对象（Horizon：线程对象随最后一个引用消失） | Handle closed: the object is freed only when this holds together with exited (Horizon: the thread object goes away with the last reference)
     uint64_t nsvc;             // SVC 次数（现场导出用） | SVC count (for the state dump)
     uint32_t mport;         // 宿主线程端口（取 CPU 时间） | Host thread port (to get CPU time)
@@ -51,6 +52,9 @@ typedef struct thr {
 static thr_t *g_all;
 
 static pthread_mutex_t G = PTHREAD_MUTEX_INITIALIZER;
+static uintptr_t g_G_holder;
+#define LOCK_G() do { pthread_mutex_lock(&G); thr_t* _gt=(thr_t*)pthread_getspecific(g_keythr); __atomic_store_n(&g_G_holder,_gt?(uintptr_t)_gt->handle:0,__ATOMIC_RELEASE); } while(0)
+#define UNLOCK_G() do { __atomic_store_n(&g_G_holder,0,__ATOMIC_RELEASE); pthread_mutex_unlock(&G); } while(0)
 #define MAX_H 4096
 static struct { int type; void *obj; } g_h[MAX_H];
 static pthread_key_t g_keythr;
@@ -157,10 +161,13 @@ void crash_thread_init(void);
 void guest_thread_init(void);   // thread.c：每线程 TSD 槽（门、x18、TLS、TLR）唯一设置点 | thread.c: the single place that sets the per-thread TSD slots (gate, x18, TLS, TLR)
 static void *thread_main(void *p) {
     thr_t *t = p;
+    LOG("THREAD_MAIN enter h=%#x", t->handle);
     pthread_setspecific(g_keythr, t);
     crash_thread_init();
     guest_thread_init();
-    pthread_mutex_lock(&G); while (!t->started) pthread_cond_wait(&t->cv, &G); pthread_mutex_unlock(&G);
+    LOG("THREAD_MAIN init done h=%#x started=%d", t->handle, t->started);
+    LOCK_G(); while (!t->started) pthread_cond_wait(&t->cv, &G); UNLOCK_G();
+    LOG("THREAD_MAIN enter guest h=%#x entry=%#llx", t->handle, (unsigned long long)t->entry);
     dm_thread_enter(t->entry, t->arg, t->stack_top);   // 不返回：客体须经 ExitThread 退出 | Does not return: the guest must exit through ExitThread
     die("客体线程入口返回");
 }
@@ -173,25 +180,73 @@ void svc_thread_exit_on_host(void) {
     t->exit_ns = now_ns(); t->exit_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
     // 这里不打日志：退出发生在客体线程自己的栈上（有的只有十几 KiB），带浮点的 printf 会把栈撑爆（真机冒烟：LibcurlResolver 退出时 SIGBUS，回溯 fprintf → __dtoa）。时刻只记下来，现场导出时再打
     // No logging here: the exit happens on the guest thread's own stack (some are only a dozen or so KiB), and a printf with floating point would blow the stack (real-device smoke test: SIGBUS when LibcurlResolver exits, backtrace fprintf → __dtoa). Only the time is recorded, and it is printed later in the state dump
-    pthread_mutex_lock(&G);
+    LOCK_G();
     t->exited = 1;
     for (thr_t *w = g_wait; w; ) { thr_t *n = w->next; if (w->wkind == 4) wake(w, -1); w = n; }   // 同步等待者重查 | Synchronization waiters re-check
     pthread_setspecific(g_keythr, NULL);
     if (t->closed) thr_free(t);
-    pthread_mutex_unlock(&G);
+    UNLOCK_G();
     pthread_exit(NULL);
 }
 void dm_thread_returned(void) { die("客体线程入口函数返回（Horizon 要求 ExitThread）"); }
 
 // 主线程登记，返回其句柄（交给 nnosInitialize 作主线程句柄）
 // Register the main thread and return its handle (passed to nnosInitialize as the main thread handle)
+static void* watchdog_main(void* arg) {
+    (void)arg;
+    for (int i = 0; i < 12; i++) {
+        struct timespec ts = {5, 0}; nanosleep(&ts, NULL);
+        if (pthread_mutex_trylock(&G) != 0) {
+            LOG("=== WATCHDOG %d G_BUSY holder=%#llx ===", i, (unsigned long long)__atomic_load_n(&g_G_holder,__ATOMIC_ACQUIRE));
+            continue;
+        }
+        LOG("=== WATCHDOG %d ===", i);
+        for (thr_t *t = g_all; t; t = t->all)
+            LOG("THR h=%#x id=%llu st=%d ex=%d wk=%d wkey=%#llx waddr=%#llx wtag=%#x svc=%#x lr=%#llx n=%llu",
+                t->handle, (unsigned long long)t->id, t->started, t->exited, t->wkind,
+                (unsigned long long)t->wkey, (unsigned long long)t->waddr, t->wtag,
+                t->last_svc, (unsigned long long)t->last_lr, (unsigned long long)t->nsvc);
+        pthread_mutex_unlock(&G);
+    }
+    return NULL;
+}
+void ot2_thread_dump_state(void) {
+    static int calls;
+    if (calls++ > 40) return;
+    if (pthread_mutex_trylock(&G) != 0) {
+        LOG("=== STATE_DUMP %d G_BUSY holder=%#x ===", calls, (unsigned)__atomic_load_n(&g_G_holder,__ATOMIC_ACQUIRE));
+        return;
+    }
+    for (thr_t *t = g_all; t; t = t->all) if (t->pt) pthread_kill(t->pt, SIGPROF);
+    pthread_mutex_unlock(&G);
+    usleep(8000);
+    if (pthread_mutex_trylock(&G) != 0) { LOG("=== STATE_DUMP %d G_BUSY2 ===", calls); return; }
+    LOG("=== STATE_DUMP %d ===", calls);
+    for (thr_t *t = g_all; t; t = t->all)
+        LOG("THR h=%#x id=%llu st=%d ex=%d wk=%d wkey=%#llx waddr=%#llx wtag=%#x svc=%#x lr=%#llx pc=%#llx n=%llu",
+            t->handle, (unsigned long long)t->id, t->started, t->exited, t->wkind,
+            (unsigned long long)t->wkey, (unsigned long long)t->waddr, t->wtag,
+            t->last_svc, (unsigned long long)t->last_lr, (unsigned long long)t->sample_pc, (unsigned long long)t->nsvc);
+    pthread_mutex_unlock(&G);
+}
+void ot2_thread_record_sample(uintptr_t pc) {
+    thr_t* t = (thr_t*)pthread_getspecific(g_keythr);
+    if (t) t->sample_pc = pc;
+}
 uint32_t svc_thread_main_init(void) {
+    static int watchdog_started;
+    if (!watchdog_started) {
+        watchdog_started = 1; pthread_t w;
+        int wrc = pthread_create(&w, NULL, watchdog_main, NULL);
+        if (!wrc) pthread_detach(w);
+        LOG("WATCHDOG_START rc=%d", wrc);
+    }
     pthread_once(&g_key_once,create_thread_key);
     if(pthread_getspecific(g_keythr))return cur()->handle;
     thr_t *t = calloc(1, sizeof *t);
     init_condition(&t->cv);
-    t->started = 1; t->prio = 44; t->core = 0; t->mask = 7; t->pt = pthread_self();
-    pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
+    t->started = 1; t->prio = 44; t->core = 0; t->mask = 1; t->pt = pthread_self();
+    LOCK_G(); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; UNLOCK_G();
     pthread_setspecific(g_keythr, t);
     return t->handle;
 }
@@ -213,18 +268,18 @@ static void wake_sync_waiters(void) {
 static int64_t now_mono_ns(void) { struct timespec ts; clock_gettime(CLOCK_MONOTONIC, &ts); return ts.tv_sec * 1000000000ll + ts.tv_nsec; }
 void dm_guest_clock_advanced(void) {
     if (!dm_detclock_enabled()) return;
-    pthread_mutex_lock(&G);
+    LOCK_G();
     for (thr_t *t = g_wait; t; t = t->next) if (t->wkind) pthread_cond_signal(&t->cv);
-    pthread_mutex_unlock(&G);
+    UNLOCK_G();
 }
 
 // 处理线程 / 同步类 SVC；返回 1 = 已处理
 // Handle thread / synchronization SVCs; returns 1 = handled
 int ot2_signal_event(uint32_t handle) {
-    pthread_mutex_lock(&G);
+    LOCK_G();
     event_t* event=h_peek(handle,O_EVENT_W);
     if(event){event->signaled=1;wake_sync_waiters();}
-    pthread_mutex_unlock(&G);
+    UNLOCK_G();
     return event!=NULL;
 }
 int svc_thread(int num, uint64_t *regs) {
@@ -235,21 +290,22 @@ int svc_thread(int num, uint64_t *regs) {
         thr_t *t = calloc(1, sizeof *t);
         init_condition(&t->cv);
         t->entry = regs[1]; t->arg = regs[2]; t->stack_top = regs[3] & ~0xFull;
-        t->prio = (int)regs[4]; t->core = (int)regs[5]; t->mask = t->core >= 0 ? 1ull << t->core : 7;
+        t->prio = (int)regs[4]; t->core = (int)regs[5]; t->mask = t->core >= 0 ? 1ull << t->core : 1;
         t->born_ns = now_ns(); t->born_tick = dm_thread_tick_fn ? dm_thread_tick_fn() : 0;
-        pthread_mutex_lock(&G); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; pthread_mutex_unlock(&G);
+        LOCK_G(); t->handle = h_new(O_THREAD, t); t->id = g_next_id++; t->all = g_all; g_all = t; UNLOCK_G();
         pthread_attr_t a; pthread_attr_init(&a); pthread_attr_setstacksize(&a, 1 << 20);
         pthread_attr_setdetachstate(&a, PTHREAD_CREATE_DETACHED);   // 退出即回收宿主资源（客体经句柄等待，不 join） | Host resources are reclaimed on exit (the guest waits through the handle, no join)
         if (pthread_create(&t->pt, &a, thread_main, t)) die("pthread_create");
         pthread_attr_destroy(&a);
-        if (0) LOG("CreateThread h=%#x entry=%#llx arg=%#llx sp=%#llx prio=%d core=%d", t->handle, t->entry, t->arg, t->stack_top, t->prio, t->core);
+        LOG("CREATE_THREAD h=%#x entry=%#llx arg=%#llx sp=%#llx prio=%d core=%d", t->handle, t->entry, t->arg, t->stack_top, t->prio, t->core);
         regs[0] = 0; regs[1] = t->handle; return 1;
     }
     case 0x09: {  // StartThread(w0)
-        pthread_mutex_lock(&G);
+        LOCK_G();
         thr_t *t = h_get((uint32_t)regs[0], O_THREAD);
+        LOG("START_THREAD h=%#x found=%d", (uint32_t)regs[0], t ? 1 : 0);
         if (t) { t->started = 1; pthread_cond_signal(&t->cv); }
-        pthread_mutex_unlock(&G);
+        UNLOCK_G();
         regs[0] = t ? 0 : R_BAD_HANDLE; return 1;
     }
     case 0x0A: guest_thread_exit(); return 1;
@@ -262,30 +318,30 @@ int svc_thread(int num, uint64_t *regs) {
         else sched_yield();
         return 1;
     }
-    case 0x0C: { pthread_mutex_lock(&G);thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)t->prio : 0; pthread_mutex_unlock(&G);return 1; }
-    case 0x0D: { pthread_mutex_lock(&G);thr_t *t = h_get((uint32_t)regs[0], O_THREAD); if (t) t->prio = (int)regs[1]; regs[0] = t ? 0 : R_BAD_HANDLE; pthread_mutex_unlock(&G);return 1; }
-    case 0x0E: { pthread_mutex_lock(&G);thr_t *t = h_get((uint32_t)regs[2], O_THREAD);
-                 regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)(uint32_t)t->core : 0; regs[2] = t ? t->mask : 0; pthread_mutex_unlock(&G);return 1; }
+    case 0x0C: { LOCK_G();thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)t->prio : 0; UNLOCK_G();return 1; }
+    case 0x0D: { LOCK_G();thr_t *t = h_get((uint32_t)regs[0], O_THREAD); if (t) t->prio = (int)regs[1]; regs[0] = t ? 0 : R_BAD_HANDLE; UNLOCK_G();return 1; }
+    case 0x0E: { LOCK_G();thr_t *t = h_get((uint32_t)regs[2], O_THREAD);
+                 regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? (uint64_t)(uint32_t)t->core : 0; regs[2] = t ? t->mask : 0; UNLOCK_G();return 1; }
     case 0x0F: {  // SetThreadCoreMask(w0, w1 理想核, x2 掩码)：-1 = 用进程缺省、-2/-3 = 不改理想核；宿主只记账 | SetThreadCoreMask(w0, w1 ideal core, x2 mask): -1 = use the process default, -2/-3 = leave the ideal core unchanged; the host only keeps the bookkeeping
-        pthread_mutex_lock(&G);thr_t *t = h_get((uint32_t)regs[0], O_THREAD);
+        LOCK_G();thr_t *t = h_get((uint32_t)regs[0], O_THREAD);
         if (t) { int c = (int)regs[1]; if (c >= 0) t->core = c; else if (c == -1) t->core = 0; if (regs[2]) t->mask = regs[2]; }
-        regs[0] = t ? 0 : R_BAD_HANDLE; pthread_mutex_unlock(&G);return 1;
+        regs[0] = t ? 0 : R_BAD_HANDLE; UNLOCK_G();return 1;
     }
     case 0x10: regs[0] = (uint64_t)(uint32_t)cur()->core; return 1;
-    case 0x25: { pthread_mutex_lock(&G);thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? t->id : 0; pthread_mutex_unlock(&G);return 1; }
+    case 0x25: { LOCK_G();thr_t *t = h_get((uint32_t)regs[1], O_THREAD); regs[0] = t ? 0 : R_BAD_HANDLE; regs[1] = t ? t->id : 0; UNLOCK_G();return 1; }
 
     case 0x1A: {  // ArbitrateLock(w0 持有者句柄, x1 地址, w2 本线程标签) | ArbitrateLock(w0 owner handle, x1 address, w2 this thread's tag)
         thr_t *t = cur(); uint64_t addr = regs[1];
-        pthread_mutex_lock(&G);
+        LOCK_G();
         int64_t r = 0;
         if (ld32(addr) == ((uint32_t)regs[0] | WAITERS_BIT)) { t->waddr = addr; t->wtag = (uint32_t)regs[2]; r = block(t, 1, -1); }
-        pthread_mutex_unlock(&G);
+        UNLOCK_G();
         regs[0] = (uint64_t)r; return 1;
     }
-    case 0x1B: pthread_mutex_lock(&G); lock_handoff(regs[0]); pthread_mutex_unlock(&G); regs[0] = 0; return 1;
+    case 0x1B: LOCK_G(); lock_handoff(regs[0]); UNLOCK_G(); regs[0] = 0; return 1;
     case 0x1C: {  // WaitProcessWideKeyAtomic(x0 锁地址, x1 条件键, w2 标签, x3 超时) | WaitProcessWideKeyAtomic(x0 lock address, x1 condition key, w2 tag, x3 timeout)
         thr_t *t = cur(); uint64_t addr = regs[0], key = regs[1];
-        pthread_mutex_lock(&G);
+        LOCK_G();
         // 顺序要紧：先置条件键 = 1，再放互斥锁。SDK 的 InternalConditionVariable::Signal 在用户态先读条件键、为 0 就不发 svc 0x1D；
         // 用户态抢互斥锁也不经过 G。原先先 lock_handoff 后置键：放锁后、置键前，别的线程可在用户态抢到锁、改完条件、读到键 0 就不唤醒，
         // 本线程随后挂上去永远等不到（并行负载下资源表读写锁 main+0x320e5e0 卡死：读者计数 0、锁空闲、写者条件键 1、写者仍在等）。
@@ -309,33 +365,33 @@ int svc_thread(int num, uint64_t *regs) {
         t->wkey = key; t->waddr = addr; t->wtag = (uint32_t)regs[2];
 #endif
         int64_t r = block(t, 2, (int64_t)regs[3]);   // 超时：不重新拿锁（用户态自己拿） | Timeout: the lock is not re-acquired (user mode takes it itself)
-        pthread_mutex_unlock(&G);
+        UNLOCK_G();
         regs[0] = (uint64_t)r; return 1;
     }
     case 0x1D: {  // SignalProcessWideKey(x0 条件键, w1 个数，<=0 全部) | SignalProcessWideKey(x0 condition key, w1 count, <=0 all)
         uint64_t key = regs[0]; int cnt = (int)regs[1], n = 0;
-        pthread_mutex_lock(&G);
+        LOCK_G();
         for (thr_t *w; (cnt <= 0 || n < cnt) && (w = pick(2, key)); n++) lock_acquire_for(w, w->waddr, w->wtag);   // 按内核顺序；转为锁等待或被唤醒后不再是 kind 2 | In kernel order; once turned into a lock wait or woken it is no longer kind 2
         int left = 0; for (thr_t *w = g_wait; w; w = w->next) if (w->wkind == 2 && w->wkey == key) { left = 1; break; }
         if (!left) st32(key, 0);
-        pthread_mutex_unlock(&G);
+        UNLOCK_G();
         regs[0] = 0; return 1;
     }
 
     case 0x34: {  // WaitForAddress(x0 地址, w1 类型, w2 值, x3 超时)：0 小于则等、1 小于则减一再等、2 相等则等 | WaitForAddress(x0 address, w1 type, w2 value, x3 timeout): 0 wait if less than, 1 decrement if less than then wait, 2 wait if equal
         thr_t *t = cur(); uint64_t addr = regs[0]; int type = (int)regs[1]; int32_t val = (int32_t)regs[2];
-        pthread_mutex_lock(&G);
+        LOCK_G();
         int64_t r; uint32_t v = ld32(addr);
         int ok = type == 2 ? (int32_t)v == val : (int32_t)v < val;
         if (ok && type == 1) { while (!cas32(addr, &v, v - 1)) if (!((int32_t)v < val)) { ok = 0; break; } }
         if (!ok) r = R_BAD_STATE;
         else { t->waddr = addr; r = block(t, 3, (int64_t)regs[3]); }
-        pthread_mutex_unlock(&G);
+        UNLOCK_G();
         regs[0] = (uint64_t)r; return 1;
     }
     case 0x35: {  // SignalToAddress(x0 地址, w1 类型, w2 值, w3 个数)：0 唤醒、1 相等则加一并唤醒、2 相等则按等待数改值并唤醒 | SignalToAddress(x0 address, w1 type, w2 value, w3 count): 0 wake, 1 increment if equal and wake, 2 if equal modify the value by waiter count and wake
         uint64_t addr = regs[0]; int type = (int)regs[1]; int32_t val = (int32_t)regs[2]; int cnt = (int)regs[3];
-        pthread_mutex_lock(&G);
+        LOCK_G();
         int nw = 0; for (thr_t *w = g_wait; w; w = w->next) if (w->wkind == 3 && w->waddr == addr) nw++;
         int64_t r = 0;
         if (type != 0) {
@@ -349,17 +405,17 @@ int svc_thread(int num, uint64_t *regs) {
         }
         if (!r) { int n = 0;
             for (thr_t *w; (cnt <= 0 || n < cnt) && (w = pick(3, addr)); n++) wake(w, 0); }
-        pthread_mutex_unlock(&G);
+        UNLOCK_G();
         regs[0] = (uint64_t)r; return 1;
     }
 
     case 0x45: {  // CreateEvent(→w1 写端, w2 读端) | CreateEvent(→w1 write end, w2 read end)
         event_t *e = calloc(1, sizeof *e); e->refs = 2;
-        pthread_mutex_lock(&G); uint32_t hw = h_new(O_EVENT_W, e), hr = h_new(O_EVENT_R, e); pthread_mutex_unlock(&G);
+        LOCK_G(); uint32_t hw = h_new(O_EVENT_W, e), hr = h_new(O_EVENT_R, e); UNLOCK_G();
         regs[0] = 0; regs[1] = hw; regs[2] = hr; return 1;
     }
     case 0x11: case 0x12: case 0x17: {  // SignalEvent(写端) / ClearEvent(任一端) / ResetSignal(读端，未触发报错) | SignalEvent(write end) / ClearEvent(either end) / ResetSignal(read end, error if not signaled)
-        pthread_mutex_lock(&G);
+        LOCK_G();
         // SignalEvent 只认写端；ClearEvent 两端都认；ResetSignal 只认读端
         // SignalEvent accepts only the write end; ClearEvent accepts both ends; ResetSignal accepts only the read end
         uint32_t h = (uint32_t)regs[0];
@@ -371,13 +427,13 @@ int svc_thread(int num, uint64_t *regs) {
         else if (num == 0x11) { e->signaled = 1; wake_sync_waiters(); }
         else if (num == 0x17 && !e->signaled) r = R_BAD_STATE;
         else e->signaled = 0;
-        pthread_mutex_unlock(&G);
+        UNLOCK_G();
         regs[0] = (uint64_t)r; return 1;
     }
     case 0x18: {  // WaitSynchronization(→w1 下标; x1 句柄数组, w2 个数, x3 超时) | WaitSynchronization(→w1 index; x1 handle array, w2 count, x3 timeout)
         thr_t *t = cur(); const uint32_t *hs = (const uint32_t *)regs[1]; int n = (int)regs[2]; int64_t ns = (int64_t)regs[3];
         int64_t deadline = ns > 0 ? (dm_detclock_enabled() ? (int64_t)guest_ns() : now_mono_ns()) + ns : 0;
-        pthread_mutex_lock(&G);
+        LOCK_G();
         int64_t r; int idx = -1;
         for (;;) {
             if (t->cancel) { t->cancel = 0; r = R_CANCELLED; break; }
@@ -389,14 +445,14 @@ int svc_thread(int num, uint64_t *regs) {
             if (ns > 0 && left <= 0) { r = R_TIMEOUT; break; }
             if (block(t, 4, left) == R_TIMEOUT) { r = R_TIMEOUT; break; }
         }
-        pthread_mutex_unlock(&G);
+        UNLOCK_G();
         regs[0] = (uint64_t)r; regs[1] = idx >= 0 ? (uint64_t)idx : 0; return 1;
     }
     case 0x19: {  // CancelSynchronization(w0 线程) | CancelSynchronization(w0 thread)
-        pthread_mutex_lock(&G);
+        LOCK_G();
         thr_t *t = h_get((uint32_t)regs[0], O_THREAD);
         if (t) { t->cancel = 1; if (t->wkind == 4) wake(t, -1); }
-        pthread_mutex_unlock(&G);
+        UNLOCK_G();
         regs[0] = t ? 0 : R_BAD_HANDLE; return 1;
     }
     case 0x15: { // Same-process transfer memory with real shared backing.
@@ -406,17 +462,17 @@ int svc_thread(int num, uint64_t *regs) {
         if(m->fd<0 || ftruncate(m->fd,m->size))die("Transfer-memory backing failed");
         if(pwrite(m->fd,m->source,m->size,0)!=(ssize_t)m->size)die("Transfer-memory initialization failed");
         if(mmap(m->source,m->size,PROT_READ|PROT_WRITE,MAP_SHARED|MAP_FIXED,m->fd,0)==MAP_FAILED)die("Transfer-memory source map failed");
-        pthread_mutex_lock(&G);regs[1]=h_new(O_TRANSFER,m);pthread_mutex_unlock(&G);regs[0]=0;return 1;
+        LOCK_G();regs[1]=h_new(O_TRANSFER,m);UNLOCK_G();regs[0]=0;return 1;
     }
     case 0x51: case 0x52: {
-        pthread_mutex_lock(&G);transfer_t* m=h_peek((uint32_t)regs[0],O_TRANSFER);
-        if(!m || regs[2]!=m->size || (regs[1]&4095)){pthread_mutex_unlock(&G);regs[0]=m?0xd401:R_BAD_HANDLE;return 1;}
+        LOCK_G();transfer_t* m=h_peek((uint32_t)regs[0],O_TRANSFER);
+        if(!m || regs[2]!=m->size || (regs[1]&4095)){UNLOCK_G();regs[0]=m?0xd401:R_BAD_HANDLE;return 1;}
         int flags=num==0x51?MAP_SHARED|MAP_FIXED:MAP_PRIVATE|MAP_ANONYMOUS|MAP_FIXED;
         void* result=mmap((void*)regs[1],m->size,num==0x51?PROT_READ|PROT_WRITE:PROT_NONE,flags,num==0x51?m->fd:-1,0);
-        pthread_mutex_unlock(&G);regs[0]=result==MAP_FAILED?R_OUT_OF_RES:0;return 1;
+        UNLOCK_G();regs[0]=result==MAP_FAILED?R_OUT_OF_RES:0;return 1;
     }
     case 0x16: {  // CloseHandle(w0)：事件两端都关才释放；线程句柄关闭后槽位回收，对象在线程也退出后释放 | CloseHandle(w0): an event is freed only when both ends are closed; after a thread handle is closed the slot is recycled, and the object is freed once the thread has also exited
-        pthread_mutex_lock(&G);
+        LOCK_G();
         unsigned i = (uint32_t)regs[0] - 0x1000;
         if (i > 0 && i < MAX_H && (g_h[i].type == O_EVENT_R || g_h[i].type == O_EVENT_W)) {
             event_t *e = g_h[i].obj; if (--e->refs == 0) free(e);
@@ -429,7 +485,7 @@ int svc_thread(int num, uint64_t *regs) {
             t->closed = 1;
             if (t->exited) thr_free(t);
         }
-        pthread_mutex_unlock(&G);
+        UNLOCK_G();
         regs[0] = 0; return 1;
     }
     }
@@ -438,6 +494,6 @@ int svc_thread(int num, uint64_t *regs) {
 
 
 #ifdef OT2_THREAD_TESTING
-size_t ot2_thread_test_objects(void){pthread_mutex_lock(&G);size_t n=0;for(thr_t* t=g_all;t;t=t->all)n++;pthread_mutex_unlock(&G);return n;}
-size_t ot2_thread_test_waiters(int kind,uint64_t address){pthread_mutex_lock(&G);size_t n=0;for(thr_t* t=g_wait;t;t=t->next)if(t->wkind==kind&&(!address||t->waddr==address))n++;pthread_mutex_unlock(&G);return n;}
+size_t ot2_thread_test_objects(void){LOCK_G();size_t n=0;for(thr_t* t=g_all;t;t=t->all)n++;UNLOCK_G();return n;}
+size_t ot2_thread_test_waiters(int kind,uint64_t address){LOCK_G();size_t n=0;for(thr_t* t=g_wait;t;t=t->next)if(t->wkind==kind&&(!address||t->waddr==address))n++;UNLOCK_G();return n;}
 #endif

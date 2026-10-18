@@ -289,7 +289,7 @@ void finish_commands(VkCommandBuffer cmd) {
     check(vkEndCommandBuffer(cmd),"end commands");
     VkSubmitInfo s{VK_STRUCTURE_TYPE_SUBMIT_INFO};s.commandBufferCount=1;s.pCommandBuffers=&cmd;
     VkFenceCreateInfo f{VK_STRUCTURE_TYPE_FENCE_CREATE_INFO};VkFence fence;check(vkCreateFence(device,&f,nullptr,&fence),"create fence");
-    ++perf.submits;{PerfScope timing(perf.wait_ns);check(vkQueueSubmit(queue,1,&s,fence),"submit");check(vkWaitForFences(device,1,&fence,VK_TRUE,UINT64_MAX),"GPU completion");}
+    ++perf.submits;{PerfScope timing(perf.wait_ns);check(vkQueueSubmit(queue,1,&s,fence),"submit");VkResult wr=vkWaitForFences(device,1,&fence,VK_TRUE,20000000000ULL);if(wr!=VK_SUCCESS)check(wr,"GPU completion TIMEOUT after 20s (fence never signaled)");}
     gpu_profile_retire(cmd);retire_legacy_rendering(cmd);vkDestroyFence(device,fence,nullptr);release_command(cmd);
 }
 VkFormat format(int f) {

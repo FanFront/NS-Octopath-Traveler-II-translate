@@ -55,7 +55,7 @@ uint64_t dependency_union_skips=0,dependency_union_checks=0;
 void retire_gpu_batch(const std::shared_ptr<GpuBatch>& batch){
     if(batch->retired)return;
     FrameTraceScope trace("OT2 retire GPU batch");
-    {FrameTraceScope wait_trace("OT2 ring fence wait");PerfScope timing(perf.wait_ns);check(vkWaitForFences(device,1,&batch->fence,VK_TRUE,UINT64_MAX),"GPU ring completion");}
+    {FrameTraceScope wait_trace("OT2 ring fence wait");PerfScope timing(perf.wait_ns);VkResult wr=vkWaitForFences(device,1,&batch->fence,VK_TRUE,20000000000ULL);if(wr!=VK_SUCCESS)check(wr,"GPU ring fence TIMEOUT after 20s (fence never signaled)");}
     gpu_profile_retire(batch->command);retire_legacy_rendering(batch->command);
     std::vector<uint64_t> prefix(batch->queries+1);
     if(batch->queries){

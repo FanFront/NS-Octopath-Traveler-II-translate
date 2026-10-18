@@ -49,7 +49,10 @@ final class GameInputView extends View {
     static boolean gamepadSource(int sources,boolean virtual){return !virtual&&((sources&InputDevice.SOURCE_GAMEPAD)==InputDevice.SOURCE_GAMEPAD||(sources&InputDevice.SOURCE_JOYSTICK)==InputDevice.SOURCE_JOYSTICK);}
     static boolean controllerPresent(){
         for(int id:InputDevice.getDeviceIds()){
-            InputDevice d=InputDevice.getDevice(id);if(d!=null&&gamepadSource(d.getSources(),d.isVirtual()))return true;
+            InputDevice d=InputDevice.getDevice(id);if(d==null||!gamepadSource(d.getSources(),d.isVirtual()))continue;
+            String n=d.getName();
+            if(n!=null&&n.startsWith("uinput-"))continue;   // 忽略 MIUI 游戏加速等注入的虚拟手柄
+            return true;
         }return false;
     }
     boolean controlsVisible(){return !controllerConnected;}
