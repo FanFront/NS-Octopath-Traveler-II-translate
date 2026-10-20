@@ -8,7 +8,7 @@
 - Your R2 source object must be an archive containing an **already-decrypted** `ExeFS/` and `RomFS/` directory. Optional: `Control/` and `AddOnContent/`.
 - **An XCI labelled "cracked" is not necessarily decrypted**. This workflow intentionally rejects raw `.xci`. If only the XCI is on R2, archive and upload your previously extracted decrypted directory as a separate input object. This is not an APK converter for encrypted XCI files.
 - The standard GitHub-hosted Ubuntu runner only has about 14 GiB available. The project recommends approximately 60 GiB, so this workflow uses your own Linux x64 self-hosted runner labelled `ot2-builder` with >= 60 GiB free (80-100 GiB recommended).
-- For a **public GitHub repository**, the workflow uploads **APK and metadata only**. It does not publish `game.s2a`, which contains licensed game data. The APK alone cannot run the game. **Make the fork private if you want the complete APK + S2A artifact**, available to repository readers. Private artifacts also remain subject to GitHub storage limits, retention, and permitted use.
+- For a **public GitHub repository**, the workflow uploads **APK and metadata only**. It does not publish `game.s2a`, which contains licensed game data. The APK alone cannot run the game. **Create a separate private repository (not a GitHub fork) if you want the complete APK + S2A artifact**, accessible to its authorized readers. GitHub does not allow independently changing the visibility of a public upstream fork. Private artifacts also remain subject to GitHub storage limits, retention, and permitted use.
 
 ## 1. Make a decrypted game archive and put it on R2
 
@@ -63,7 +63,7 @@ Optional: set a repository Variable `S2A_SCRATCH` to an absolute path on a disk 
 4. Confirm the runner is online. The workflow downloads the decrypted archive, validates the game's real build ID, builds the APK and S2A bundle, and verifies the resource file.
 5. Open the completed run and download its item under **Artifacts**.
 
-The complete private artifact includes `game.apk`, `game.s2a`, `package.json`, and `INSTALL.txt`. It expires after one day. Public repositories receive an APK-only artifact that is not by itself playable. You can use the already-generated private bundle only from a private artifact or local build.
+In an independent private repository, the complete private artifact includes `game.apk`, `game.s2a`, `package.json`, and `INSTALL.txt`. It expires after one day. Public repositories receive an APK-only artifact that is not by itself playable. For a complete playable package, use the separate private repository workflow or keep the game bundle from a local build. The public fork deliberately will not distribute the game bundle.
 
 The workflow does not create a GitHub Release, commit binaries to the repository, or upload anything back to R2.
 
