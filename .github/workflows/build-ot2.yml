@@ -7,6 +7,11 @@ on:
         description: "R2 object key: raw XCI (requires local runner keys), or decrypted ExeFS/RomFS .tar.gz/.zip"
         type: string
         required: true
+      allow_modified_program_nca:
+        description: "Trust a modded XCI: allow Program NCA SHA mismatch only (advanced)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -28,6 +33,7 @@ jobs:
       AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
       AWS_DEFAULT_REGION: auto
       R2_OBJECT_KEY: ${{ inputs.r2_object_key }}
+      ALLOW_MODIFIED_PROGRAM_NCA: ${{ inputs.allow_modified_program_nca }}
       S2A_SCRATCH: ${{ vars.S2A_SCRATCH }}
       S2A_LOCAL_KEYS_PATH: ${{ vars.S2A_LOCAL_KEYS_PATH }}
       TITLE_ID: "0100a3501946e000"
@@ -100,10 +106,14 @@ jobs:
             *.xci|*.XCI)
               # No keys in GitHub Actions Secrets or R2: decrypt exclusively on your runner.
               ./scripts/bootstrap-tools.sh "$S2A_HOME/work"
+              xci_flags=()
+              if [[ "$ALLOW_MODIFIED_PROGRAM_NCA" == "true" ]]; then
+                xci_flags+=(--allow-modified-program-nca)
+              fi
               .venv/bin/python -m scripts.extract_xci_local "$destination" \
                 --keys "$S2A_LOCAL_KEYS_PATH" \
                 --hactool "$S2A_HOME/work/tools/hactool/hactool" \
-                --output "$S2A_HOME/decrypted" --version "$VERSION"
+                --output "$S2A_HOME/decrypted" --version "$VERSION" "${xci_flags[@]}"
               ;;
             *)
               python3 scripts/unpack_decrypted.py "$destination" "$S2A_HOME/decrypted"
