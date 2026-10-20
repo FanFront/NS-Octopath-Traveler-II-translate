@@ -162,7 +162,7 @@ class XCIExtractionTests(unittest.TestCase):
 
         def fake_hactool(binary, keys, *args):
             if "--listromfs" in args:
-                return "Visiting romfs\\nrom:file-one\\nrom:file-two\\n"
+                return "Visiting romfs\nrom:file-one\nrom:file-two\n"
             if any(str(x).startswith("--exefsdir=") for x in args):
                 exe = Path(next(str(x).split("=", 1)[1] for x in args
                                 if str(x).startswith("--exefsdir=")))
@@ -176,15 +176,15 @@ class XCIExtractionTests(unittest.TestCase):
             dirs = [str(x).split("=", 1)[1] for x in args
                     if str(x).startswith("--romfsdir=")]
             if dirs and "AddOnContent" in dirs[0]:
-                return ("Title ID: 0100a3501946f001\\n"
-                        "Partition Type: RomFS\\n")
+                return ("Title ID: 0100a3501946f001\n"
+                        "Partition Type: RomFS\n")
             if dirs:
                 control_root = Path(dirs[0])
                 control_root.mkdir(parents=True)
                 (control_root / "control.nacp").write_bytes(bytes(0x3070))
             return ""
 
-        with patch.object(xci, "inventory", return_value=[base, patch_record, dlc]), \\
+        with patch.object(xci, "inventory", return_value=[base, patch_record, dlc]), \
              patch.object(xci, "hactool", side_effect=fake_hactool):
             with self.assertRaisesRegex(ValueError, r"reported 2 file entries"):
                 xci.extract(self.ncas, self.stage, "hactool", Path("local.keys"),
