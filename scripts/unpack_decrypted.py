@@ -45,6 +45,8 @@ def unpack(archive, dest):
         processed += 1
         if processed > MAX_ENTRIES:
             raise ValueError("Archive has too many entries")
+        if is_dir and len(PurePosixPath(name).parts) == 1 and PurePosixPath(name).parts[0] not in PARTS:
+            return
         path = output_path(dest, name)
         if is_dir:
             path.mkdir(parents=True, exist_ok=True)
