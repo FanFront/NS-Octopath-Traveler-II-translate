@@ -58,6 +58,25 @@ This step:
 
 If the extraction fails, the temporary partial files are removed. Errors from hactool are **not dumped** because they may contain key material. `--no-dlc` is available to omit optional DLC on an initial trial.
 
+### Voice-modded XCI with a Program NCA CNMT hash mismatch
+
+A Chinese-voice mod can legitimately produce bytes different from those listed in the original CNMT, but a mismatch is **not proof** of a valid voice patch. It may also indicate corruption or a different modification. The default remains strict.
+
+If you personally trust the modified XCI and its origin, first run the strict command above and only if it fails on a **Program** NCA SHA mismatch, retry using this explicit opt-in:
+
+```bash
+python3 -m scripts.extract_xci_local /ossdata/prodkeys/game.xci \
+  --keys /ossdata/prodkeys/hactool.keys \
+  --hactool "$(command -v hactool)" \
+  --output /ossdata/ot2-decrypted \
+  --title-id 0100a3501946e000 --version 131072 \
+  --allow-modified-program-nca --no-dlc
+```
+
+The override applies **only to Program NCA SHA-256 comparisons**. NCA sizes, content IDs, Control/DLC CNMT hashes, decryption success, Unreal resource identification, Title ID, update version, and expected main NSO Build ID remain enforced. It does **not** authenticate the modified files or guarantee the Chinese audio will function. If you are retrying after a prior success, use a new `--output` directory because the script does not overwrite successful output. Accepted overrides are recorded in the local `manifest.json` under `modified_program_ncas`.
+
+The XCI GitHub Actions workflow exposes a **`allow_modified_program_nca`** checkbox (default OFF). Enable it only for the same trusted modified source; keys remain on your runner. Do not switch off unrelated validations to force a build.
+
 When successful:
 
 ```bash
