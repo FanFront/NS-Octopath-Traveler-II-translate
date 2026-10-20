@@ -100,7 +100,7 @@ jobs:
             *.xci|*.XCI)
               # No keys in GitHub Actions Secrets or R2: decrypt exclusively on your runner.
               ./scripts/bootstrap-tools.sh "$S2A_HOME/work"
-              .venv/bin/python scripts/extract_xci_local.py "$destination" \
+              .venv/bin/python -m scripts.extract_xci_local "$destination" \
                 --keys "$S2A_LOCAL_KEYS_PATH" \
                 --hactool "$S2A_HOME/work/tools/hactool/hactool" \
                 --output "$S2A_HOME/decrypted" --version "$VERSION"
