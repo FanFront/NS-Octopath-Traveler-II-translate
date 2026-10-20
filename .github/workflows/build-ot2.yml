@@ -1,0 +1,152 @@
+name: OT2 Android (R2 input -> GitHub artifact)
+
+on:
+  workflow_dispatch:
+    inputs:
+      r2_object_key:
+        description: "R2 object key of the already-decrypted ExeFS/RomFS .tar.gz or .zip (not .xci)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ot2-r2-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    # The standard GitHub-hosted Ubuntu runner has too little disk (14 GiB).
+    # Register a Linux x64 self-hosted runner with label 'ot2-builder' and >=60 GiB free.
+    runs-on: [self-hosted, linux, x64, ot2-builder]
+    timeout-minutes: 360
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      R2_OBJECT_KEY: ${{ inputs.r2_object_key }}
+      S2A_SCRATCH: ${{ vars.S2A_SCRATCH }}
+      TITLE_ID: "0100a3501946e000"
+      VERSION: "131072"
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Check source format, credentials, tools, and disk space
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "$R2_OBJECT_KEY" in
+            *.tar.gz|*.tgz|*.tar|*.zip) ;;
+            *.xci|*.XCI)
+              echo "::error::A cracked XCI is not proof its NCA contents are decrypted. Upload an archive of your already-decrypted ExeFS/ and RomFS/ to R2."
+              exit 1 ;;
+            *) echo "::error::Expected a .tar.gz, .tgz, .tar, or .zip of ExeFS/RomFS"; exit 1 ;;
+          esac
+          test -n "$R2_ACCOUNT_ID" || { echo "::error::Missing secret R2_ACCOUNT_ID"; exit 1; }
+          test -n "$R2_BUCKET" || { echo "::error::Missing secret R2_BUCKET"; exit 1; }
+          test -n "$AWS_ACCESS_KEY_ID" || { echo "::error::Missing secret R2_ACCESS_KEY_ID"; exit 1; }
+          test -n "$AWS_SECRET_ACCESS_KEY" || { echo "::error::Missing secret R2_SECRET_ACCESS_KEY"; exit 1; }
+          for tool in aws git make cmake cargo dotnet spirv-val; do
+            command -v "$tool" >/dev/null || { echo "::error::Missing build tool: $tool"; exit 1; }
+          done
+          test -n "${ANDROID_HOME:-}" || { echo "::error::Set ANDROID_HOME on the self-hosted runner"; exit 1; }
+          scratch="${S2A_SCRATCH:-/mnt/ot2-actions}"
+          [[ "$scratch" == /* ]] || { echo "::error::S2A_SCRATCH must be an absolute path"; exit 1; }
+          mkdir -p "$scratch"
+          available="$(df -B1 --output=avail "$scratch" | tail -n 1 | tr -d ' ')"
+          echo "Scratch free space: $((available / 1024 / 1024 / 1024)) GiB"
+          if (( available < 60 * 1024 * 1024 * 1024 )); then
+            echo "::error::At least 60 GiB free disk space is required on the scratch volume"
+            exit 1
+          fi
+          root="$scratch/ot2-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "$root/input"
+          echo "S2A_HOME=$root" >> "$GITHUB_ENV"
+          echo "S2A_PRODUCT=$root/output/$TITLE_ID-v$VERSION" >> "$GITHUB_ENV"
+
+      - name: Download decrypted game input from Cloudflare R2 (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          destination="$S2A_HOME/input/${R2_OBJECT_KEY##*/}"
+          aws s3 cp "s3://$R2_BUCKET/$R2_OBJECT_KEY" "$destination" \
+            --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
+            --no-progress
+          python3 scripts/unpack_decrypted.py "$destination" "$S2A_HOME/decrypted"
+          rm -- "$destination"
+
+      - name: Preflight game files without prod.keys
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 switch2android.py inspect-extracted "$S2A_HOME/decrypted" \
+            --title-id "$TITLE_ID" --version "$VERSION"
+
+      - name: Bootstrap toolchain and build Android package
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/bootstrap-tools.sh "$S2A_HOME/work"
+          .venv/bin/python switch2android.py doctor
+          .venv/bin/python switch2android.py build-extracted "$S2A_HOME/decrypted" \
+            --title-id "$TITLE_ID" --version "$VERSION" \
+            --work "$S2A_HOME/work" --output "$S2A_HOME/output" --embed never
+          test -s "$S2A_PRODUCT/game.apk"
+          test -s "$S2A_PRODUCT/game.s2a"
+          .venv/bin/python switch2android.py verify "$S2A_PRODUCT/game.s2a"
+          sha256sum "$S2A_PRODUCT/game.apk"
+
+      - name: Upload complete package as private GitHub Actions artifact
+        if: ${{ github.event.repository.private }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ot2-private-complete-${{ github.run_number }}
+          path: |
+            ${{ env.S2A_PRODUCT }}/game.apk
+            ${{ env.S2A_PRODUCT }}/game.s2a
+            ${{ env.S2A_PRODUCT }}/package.json
+            ${{ env.S2A_PRODUCT }}/INSTALL.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+      - name: Upload APK only when repository is public
+        if: ${{ !github.event.repository.private }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ot2-public-apk-only-${{ github.run_number }}
+          path: |
+            ${{ env.S2A_PRODUCT }}/game.apk
+            ${{ env.S2A_PRODUCT }}/package.json
+            ${{ env.S2A_PRODUCT }}/INSTALL.txt
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+      - name: Erase staged game contents from the self-hosted runner
+        if: always()
+        shell: bash
+        run: |
+          if [[ -n "${S2A_HOME:-}" && "$S2A_HOME" == */ot2-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT} && -d "$S2A_HOME" ]]; then
+            rm -rf -- "$S2A_HOME"
+          fi
