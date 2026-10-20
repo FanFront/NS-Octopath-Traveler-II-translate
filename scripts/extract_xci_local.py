@@ -59,7 +59,7 @@ def inventory(directory, meta_tmp, binary, keys):
     return records
 
 
-def content_path(record, kind, directory, verified):
+def content_path(record, kind, directory, verified, allow_modified_program=False):
     matches = [c for c in record["contents"] if c["type"] == kind]
     if len(matches) != 1 or matches[0]["id_offset"] != 0:
         raise ValueError("Expected exactly one matching NCA content in CNMT")
@@ -69,12 +69,17 @@ def content_path(record, kind, directory, verified):
         raise ValueError("Missing or unexpected NCA: " + nca.name)
     if nca.name not in verified:
         if sha256(nca) != item["sha256"]:
-            raise ValueError("NCA hash mismatch against CNMT: " + nca.name)
+            if not (kind == 1 and allow_modified_program):
+                raise ValueError("NCA hash mismatch against CNMT: " + nca.name +
+                                 " (use --allow-modified-program-nca only if you trust this modification)")
+            print("WARNING: Program NCA differs from its CNMT SHA-256: " + nca.name +
+                  "; explicitly accepting modified executable/resource container", flush=True)
         verified.add(nca.name)
     return nca
 
 
-def extract(ncas, staging, binary, keys, title, version, include_dlc=True):
+def extract(ncas, staging, binary, keys, title, version, include_dlc=True,
+            allow_modified_program=False):
     metadata_dir = staging / "metadata"
     metadata_dir.mkdir()
     records = inventory(ncas, metadata_dir, binary, keys)
@@ -84,8 +89,10 @@ def extract(ncas, staging, binary, keys, title, version, include_dlc=True):
     if base["title_id"] != title:
         raise ValueError("Unexpected game title")
     verified = set()
-    base_program = content_path(base, 1, ncas, verified)
-    update_program = content_path(updated, 1, ncas, verified)
+    base_program = content_path(base, 1, ncas, verified,
+                                allow_modified_program=allow_modified_program)
+    update_program = content_path(updated, 1, ncas, verified,
+                                  allow_modified_program=allow_modified_program)
     target = staging / "decrypted"
     target.mkdir()
     print("Combining base Program and v%d update..." % version, flush=True)
@@ -144,6 +151,10 @@ def main():
     parser.add_argument("--title-id", default=DEFAULT_TITLE)
     parser.add_argument("--version", type=int, default=DEFAULT_VERSION)
     parser.add_argument("--no-dlc", action="store_true")
+    parser.add_argument(
+        "--allow-modified-program-nca", action="store_true",
+        help="opt-in: accept Program NCA SHA-256 mismatches only (for trusted voice patches); "
+             "still require correct size, decryption, Title ID, v1.1.1 and main Build ID")
     args = parser.parse_args()
     xci, keys, output = args.xci.resolve(), args.keys.resolve(), args.output.resolve()
     if not xci.is_file() or xci.suffix.lower() != ".xci":
@@ -164,7 +175,8 @@ def main():
                 "--securedir=" + str(ncas), xci)
         source = extract(ncas, stage, args.hactool, keys,
                          args.title_id.lower(), args.version,
-                         include_dlc=not args.no_dlc)
+                         include_dlc=not args.no_dlc,
+                         allow_modified_program=args.allow_modified_program_nca)
         source.rename(output)
     print("Decrypted game ready at " + str(output), flush=True)
 
