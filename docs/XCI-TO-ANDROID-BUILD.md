@@ -82,7 +82,7 @@ Unlike `--no-dlc`, this processes optional DLC. `--allow-modified-dlc-nca` appli
 
 If full DLC extraction fails, the original no-DLC output remains usable for `inspect-extracted` and Android build experiments.
 
-In the GitHub Actions build workflow, enable `allow_modified_program_nca` and `allow_modified_dlc_nca` only for your trusted XCI. Both options default to **false**; the R2 object is downloaded read-only and artifacts remain GitHub-only.
+In the GitHub Actions build workflow, enable `allow_modified_program_nca` and `allow_modified_dlc_nca` only for your trusted XCI. Both options default to **false**. Alternatively, select `skip_dlc` (also default **false**) together with `allow_modified_program_nca` to build from the already validated base+1.1.1 content without any DLC. The R2 object is downloaded read-only and artifacts remain GitHub-only.
 
 ### Voice-modded XCI with a Program NCA CNMT hash mismatch
 
