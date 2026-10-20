@@ -113,6 +113,7 @@ def build(args):
             metadata = extracted.import_game(source, game, plan)
             print(f'Using verified decrypted game files: {len(plan["files"])} files', flush=True)
         else:
+            keys = outside(args.keys)
             hactool = args.hactool or work / 'tools/hactool/hactool'
             ht = packages.Hactool(hactool, keys)
             with tempfile.TemporaryDirectory(dir=work, prefix='metadata-') as scratch:
