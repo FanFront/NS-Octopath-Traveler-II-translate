@@ -9,7 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from . import bundle, packages, shaders
+from . import bundle, packages, shaders, extracted
 from tools.game_profile import make_profile
 
 REPO = Path(__file__).resolve().parents[1]
@@ -92,31 +92,44 @@ def doctor(args):
 
 
 def build(args):
-    source, keys, work, out = map(outside, [args.source, args.keys, args.work, args.output])
+    source, work, out = map(outside, [args.source, args.work, args.output])
+    if args.command == 'build-extracted':
+        if source == work or source == out or work == out or source in work.parents or source in out.parents or work in source.parents or out in source.parents or work in out.parents or out in work.parents:
+            raise ValueError('Keep decrypted input, work, and output in separate non-nested directories')
     require_android(sdk_environment())
-    if not source.is_dir() or not keys.is_file():
-        raise ValueError('Input directory or keys file does not exist')
+    if not source.is_dir():
+        raise ValueError('Input directory does not exist')
+    if args.command == 'build' and not outside(args.keys).is_file():
+        raise ValueError('Keys file does not exist')
     work.mkdir(parents=True, exist_ok=True); out.mkdir(parents=True, exist_ok=True)
     # Extraction and generated Gradle assets are a single transaction per work directory.
     with (work / '.lock').open('a') as lock:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        hactool = args.hactool or work / 'tools/hactool/hactool'
-        ht = packages.Hactool(hactool, keys)
-        with tempfile.TemporaryDirectory(dir=work, prefix='metadata-') as scratch:
-            records = packages.inventory(source, ht, Path(scratch))
-        selection = packages.select(records, args.title_id, args.version, not args.no_dlc)
-        base, selected, dlcs = selection
-        title = base['title_id']; profile = profile_for(title, selected['version'])
-        print(f'{profile["name"]}: update {selected["version"]}, DLC {list(dlcs)}', flush=True)
-        game = work / 'games' / packages.selection_id(selection)
-        # Do not trust partial extraction directories; only our committed manifest is reusable.
-        if game.exists():
-            metadata = json.loads((game / 'manifest.json').read_text())
-            if metadata['id'] != packages.selection_id(selection):
-                raise ValueError('Cached extraction identity mismatch; remove that work/games directory')
+        if args.command == 'build-extracted':
+            title = args.title_id
+            profile = profile_for(title, args.version)
+            plan = extracted.validate(source, title, args.version, profile, args.display_version)
+            game = work / 'games' / ('decrypted-' + plan['id'])
+            metadata = extracted.import_game(source, game, plan)
+            print(f'Using verified decrypted game files: {len(plan["files"])} files', flush=True)
         else:
-            print('Decrypting and verifying base + update + DLC', flush=True)
-            metadata = packages.extract(selection, ht, game)
+            hactool = args.hactool or work / 'tools/hactool/hactool'
+            ht = packages.Hactool(hactool, keys)
+            with tempfile.TemporaryDirectory(dir=work, prefix='metadata-') as scratch:
+                records = packages.inventory(source, ht, Path(scratch))
+            selection = packages.select(records, args.title_id, args.version, not args.no_dlc)
+            base, selected, dlcs = selection
+            title = base['title_id']; profile = profile_for(title, selected['version'])
+            print(f'{profile["name"]}: update {selected["version"]}, DLC {list(dlcs)}', flush=True)
+            game = work / 'games' / packages.selection_id(selection)
+            # Do not trust partial extraction directories; only our committed manifest is reusable.
+            if game.exists():
+                metadata = json.loads((game / 'manifest.json').read_text())
+                if metadata['id'] != packages.selection_id(selection):
+                    raise ValueError('Cached extraction identity mismatch; remove that work/games directory')
+            else:
+                print('Decrypting and verifying base + update + DLC', flush=True)
+                metadata = packages.extract(selection, ht, game)
         game_profile = make_profile(game, title, metadata['version'], metadata['display_version'])
         main = next(m for m in game_profile['modules'] if m['name'] == 'main')
         if main['build_id'] not in profile['main_build_ids']:
@@ -158,6 +171,15 @@ def build(args):
             (stage / 'INSTALL.txt').write_text('Private local output: contains your game data. Do not redistribute.\n\nInstall game.apk, open it, then select game.s2a when asked (external mode).\nOr use: python3 switch2android.py install THIS_DIRECTORY --serial ADB_SERIAL\nKeep the same Android signing key for future updates. Saves remain in application-private storage.\n')
             stage.rename(product)
         print(f'Built: {product}', flush=True)
+
+
+def inspect_extracted(args):
+    source = outside(args.source)
+    profile = profile_for(args.title_id, args.version)
+    plan = extracted.validate(source, args.title_id, args.version, profile, args.display_version)
+    print(json.dumps(dict(title_id=args.title_id, version=args.version,
+                          main_build_id=plan['main_build_id'],
+                          files=len(plan['files']), content_id=plan['id']), indent=2))
 
 
 def inspect(args):
@@ -210,13 +232,29 @@ def main():
         p.add_argument('--shader-cache', type=Path, help='advanced: use an already validated offline shader set')
         p.add_argument('--workers', type=int, default=4)
         p.add_argument('--embed', choices=['auto', 'always', 'never'], default='auto')
+    p = commands.add_parser('inspect-extracted', help='inspect decrypted ExeFS/RomFS without keys')
+    p.add_argument('source', type=Path)
+    p.add_argument('--title-id', required=True, type=lambda s: s.lower())
+    p.add_argument('--version', required=True, type=int)
+    p.add_argument('--display-version', default='1.1.1')
+    p = commands.add_parser('build-extracted', help='build from decrypted ExeFS/RomFS without keys')
+    p.add_argument('source', type=Path)
+    p.add_argument('--title-id', required=True, type=lambda s: s.lower())
+    p.add_argument('--version', required=True, type=int)
+    p.add_argument('--display-version', default='1.1.1')
+    p.add_argument('--work', required=True, type=Path)
+    p.add_argument('-o', '--output', required=True, type=Path)
+    p.add_argument('--repak', type=Path)
+    p.add_argument('--shader-cache', type=Path)
+    p.add_argument('--workers', type=int, default=4)
+    p.add_argument('--embed', choices=['auto', 'always', 'never'], default='never')
     p = commands.add_parser('install'); p.add_argument('package', type=Path)
     p.add_argument('--serial', required=True); p.add_argument('--adb', default='adb')
     p = commands.add_parser('verify'); p.add_argument('bundle', type=Path)
     args = parser.parse_args()
     try:
         if args.command == 'verify': print(bundle.verify(args.bundle)); return 0
-        result = {'build': build, 'inspect': inspect, 'install': install, 'doctor': doctor}[args.command](args)
+        result = {'build': build, 'build-extracted': build, 'inspect': inspect, 'inspect-extracted': inspect_extracted, 'install': install, 'doctor': doctor}[args.command](args)
         return result or 0
     except (ValueError, OSError, RuntimeError, KeyError, subprocess.CalledProcessError) as error:
         print(f'Error: {error}', file=sys.stderr); return 1
