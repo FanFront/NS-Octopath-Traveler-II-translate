@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       r2_object_key:
-        description: "R2 object key of the already-decrypted ExeFS/RomFS .tar.gz or .zip (not .xci)"
+        description: "R2 object key: raw XCI (requires local runner keys), or decrypted ExeFS/RomFS .tar.gz/.zip"
         type: string
         required: true
 
@@ -29,6 +29,7 @@ jobs:
       AWS_DEFAULT_REGION: auto
       R2_OBJECT_KEY: ${{ inputs.r2_object_key }}
       S2A_SCRATCH: ${{ vars.S2A_SCRATCH }}
+      S2A_LOCAL_KEYS_PATH: ${{ vars.S2A_LOCAL_KEYS_PATH }}
       TITLE_ID: "0100a3501946e000"
       VERSION: "131072"
     steps:
@@ -56,16 +57,19 @@ jobs:
         run: |
           set -euo pipefail
           case "$R2_OBJECT_KEY" in
-            *.tar.gz|*.tgz|*.tar|*.zip) ;;
-            *.xci|*.XCI)
-              echo "::error::A cracked XCI is not proof its NCA contents are decrypted. Upload an archive of your already-decrypted ExeFS/ and RomFS/ to R2."
-              exit 1 ;;
-            *) echo "::error::Expected a .tar.gz, .tgz, .tar, or .zip of ExeFS/RomFS"; exit 1 ;;
+            *.tar.gz|*.tgz|*.tar|*.zip|*.xci|*.XCI) ;;
+            *) echo "::error::Expected XCI or a .tar.gz/.zip archive of ExeFS/RomFS"; exit 1 ;;
           esac
           test -n "$R2_ACCOUNT_ID" || { echo "::error::Missing secret R2_ACCOUNT_ID"; exit 1; }
           test -n "$R2_BUCKET" || { echo "::error::Missing secret R2_BUCKET"; exit 1; }
           test -n "$AWS_ACCESS_KEY_ID" || { echo "::error::Missing secret R2_ACCESS_KEY_ID"; exit 1; }
           test -n "$AWS_SECRET_ACCESS_KEY" || { echo "::error::Missing secret R2_SECRET_ACCESS_KEY"; exit 1; }
+          case "$R2_OBJECT_KEY" in
+            *.xci|*.XCI)
+              test -n "$S2A_LOCAL_KEYS_PATH" || { echo "::error::Set S2A_LOCAL_KEYS_PATH repository variable to the runner-local private hactool.keys path"; exit 1; }
+              [[ "$S2A_LOCAL_KEYS_PATH" == /* && -f "$S2A_LOCAL_KEYS_PATH" ]] || { echo "::error::S2A_LOCAL_KEYS_PATH is not an absolute path to an existing file on this runner"; exit 1; }
+              ;;
+          esac
           for tool in aws git make cmake cargo dotnet spirv-val; do
             command -v "$tool" >/dev/null || { echo "::error::Missing build tool: $tool"; exit 1; }
           done
@@ -84,7 +88,7 @@ jobs:
           echo "S2A_HOME=$root" >> "$GITHUB_ENV"
           echo "S2A_PRODUCT=$root/output/$TITLE_ID-v$VERSION" >> "$GITHUB_ENV"
 
-      - name: Download decrypted game input from Cloudflare R2 (read-only)
+      - name: Download XCI or decrypted game input from Cloudflare R2 (read-only)
         shell: bash
         run: |
           set -euo pipefail
@@ -92,7 +96,19 @@ jobs:
           aws s3 cp "s3://$R2_BUCKET/$R2_OBJECT_KEY" "$destination" \
             --endpoint-url "https://$R2_ACCOUNT_ID.r2.cloudflarestorage.com" \
             --no-progress
-          python3 scripts/unpack_decrypted.py "$destination" "$S2A_HOME/decrypted"
+          case "$R2_OBJECT_KEY" in
+            *.xci|*.XCI)
+              # No keys in GitHub Actions Secrets or R2: decrypt exclusively on your runner.
+              ./scripts/bootstrap-tools.sh "$S2A_HOME/work"
+              .venv/bin/python scripts/extract_xci_local.py "$destination" \
+                --keys "$S2A_LOCAL_KEYS_PATH" \
+                --hactool "$S2A_HOME/work/tools/hactool/hactool" \
+                --output "$S2A_HOME/decrypted" --version "$VERSION"
+              ;;
+            *)
+              python3 scripts/unpack_decrypted.py "$destination" "$S2A_HOME/decrypted"
+              ;;
+          esac
           rm -- "$destination"
 
       - name: Preflight game files without prod.keys
@@ -106,7 +122,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./scripts/bootstrap-tools.sh "$S2A_HOME/work"
+          if [[ ! -x "$S2A_HOME/work/tools/hactool/hactool" || ! -x .venv/bin/python ]]; then
+            ./scripts/bootstrap-tools.sh "$S2A_HOME/work"
+          fi
           .venv/bin/python switch2android.py doctor
           .venv/bin/python switch2android.py build-extracted "$S2A_HOME/decrypted" \
             --title-id "$TITLE_ID" --version "$VERSION" \
