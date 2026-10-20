@@ -58,6 +58,21 @@ This step:
 
 If the extraction fails, the temporary partial files are removed. Errors from hactool are **not dumped** because they may contain key material. `--no-dlc` is available to omit optional DLC on an initial trial.
 
+### If DLC extraction writes no files
+
+The user confirmed that the base and v1.1.1 Program NCAs successfully decrypt and produce the expected `ExeFS/main` build ID. However, the modified optional DLC `2fc783db1f9b699e40fad8c7cf676fd2.nca` may yield a recognized RomFS section with **zero extracted files**. This is different from the earlier CNMT hash mismatch. A valid RomFS label does not establish that hactool emitted usable DLC content; do **not** simply mark an empty DLC directory as successful or silently include it in the bundle.
+
+Newer versions of `scripts.extract_xci_local` report how many file paths `hactool --listromfs` enumerates (without printing sensitive/raw output) when `--romfsdir` created no files. If it reports 0, the decrypted DLC RomFS may really be empty or unsupported. If nonzero, check local write permissions, file-system compatibility, and hactool extraction behavior.
+
+To continue building without DLC, preserve the already extracted base+update directory and run:
+
+```bash
+python3 switch2android.py inspect-extracted /ossdata/ot2-decrypted \
+  --title-id 0100a3501946e000 --version 131072
+```
+
+For Actions from R2 XCI, enable `allow_modified_program_nca` and `skip_dlc`; leave `allow_modified_dlc_nca` disabled. This does not guarantee the voice mod is complete without DLC. Do not publish proprietary game assets in a public repository's artifacts.
+
 ### Optional DLC NCA modified by a voice patch
 
 If the base+v1.1.1 extraction already succeeds with `--no-dlc`, preserve that output. The optional DLC associated with `0100a3501946f001` may also be modified: for example `2fc783db1f9b699e40fad8c7cf676fd2.nca` can differ from its CNMT SHA-256. This is **not proof** that it is a legitimate voice mod; an invalid/corrupt NCA has the same symptom.
