@@ -141,8 +141,8 @@ def extract(ncas, staging, binary, keys, title, version, include_dlc=True,
         dlc_dir = target / "AddOnContent" / str(index)
         info = hactool(binary, keys, "-t", "nca",
                        "--romfsdir=" + str(dlc_dir), dlc_nca)
-        if not re.search(r"Partition Type:\\s*RomFS", info) or not re.search(
-                rf"Title ID:\\s*{record['title_id']}\\b", info, re.I):
+        if not re.search(r"Partition Type:\s*RomFS", info) or not re.search(
+                rf"Title ID:\s*{record['title_id']}\b", info, re.I):
             raise ValueError("DLC NCA does not contain a matching, readable RomFS")
         if not dlc_dir.is_dir() or not any(dlc_dir.rglob("*")):
             raise ValueError("DLC extraction failed for index %d" % index)
