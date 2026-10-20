@@ -59,7 +59,8 @@ def inventory(directory, meta_tmp, binary, keys):
     return records
 
 
-def content_path(record, kind, directory, verified, allow_modified_program=False):
+def content_path(record, kind, directory, verified, allow_modified_program=False,
+                 modified_program_names=None):
     matches = [c for c in record["contents"] if c["type"] == kind]
     if len(matches) != 1 or matches[0]["id_offset"] != 0:
         raise ValueError("Expected exactly one matching NCA content in CNMT")
@@ -74,6 +75,8 @@ def content_path(record, kind, directory, verified, allow_modified_program=False
                                  " (use --allow-modified-program-nca only if you trust this modification)")
             print("WARNING: Program NCA differs from its CNMT SHA-256: " + nca.name +
                   "; explicitly accepting modified executable/resource container", flush=True)
+            if modified_program_names is not None:
+                modified_program_names.add(nca.name)
         verified.add(nca.name)
     return nca
 
@@ -89,10 +92,13 @@ def extract(ncas, staging, binary, keys, title, version, include_dlc=True,
     if base["title_id"] != title:
         raise ValueError("Unexpected game title")
     verified = set()
+    modified_program_names = set()
     base_program = content_path(base, 1, ncas, verified,
-                                allow_modified_program=allow_modified_program)
+                                allow_modified_program=allow_modified_program,
+                                modified_program_names=modified_program_names)
     update_program = content_path(updated, 1, ncas, verified,
-                                  allow_modified_program=allow_modified_program)
+                                  allow_modified_program=allow_modified_program,
+                                  modified_program_names=modified_program_names)
     target = staging / "decrypted"
     target.mkdir()
     print("Combining base Program and v%d update..." % version, flush=True)
@@ -132,11 +138,15 @@ def extract(ncas, staging, binary, keys, title, version, include_dlc=True,
     identifier = packages.selection_id((base, updated, dlcs))
     manifest = dict(schema=1, id=identifier, title_id=title,
                     name=name, version=version, display_version=display,
+                    modified_program_ncas=sorted(modified_program_names),
                     dlc=[dict(index=i, **packages.public_record(r))
                          for i, r in dlcs.items()])
     (target / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    print("Verified title: %s; update: %d; main build ID: %s" %
+    print("Validated title: %s; update: %d; main build ID: %s" %
           (title, version, main["build_id"]), flush=True)
+    if modified_program_names:
+        print("WARNING: %d Program NCA(s) passed only with a CNMT hash mismatch override" %
+              len(modified_program_names), flush=True)
     return target
 
 
