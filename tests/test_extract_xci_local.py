@@ -41,6 +41,33 @@ class XCIExtractionTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "hash mismatch"):
             xci.content_path(rec, 1, self.ncas, set())
 
+    def test_modified_program_opt_in_only(self):
+        entry = self.content("d" * 32, b"original fixture", 1)
+        rec = record(0x80, TITLE, 0, [entry])
+        path = self.ncas / ("d" * 32 + ".nca")
+        path.write_bytes(b"modified fixture")
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
+            xci.content_path(rec, 1, self.ncas, set())
+        self.assertEqual(
+            xci.content_path(rec, 1, self.ncas, set(),
+                             allow_modified_program=True), path)
+
+    def test_modified_control_still_rejected(self):
+        entry = self.content("e" * 32, b"original fixture", 3)
+        rec = record(0x81, "0100a3501946e800", 131072, [entry])
+        (self.ncas / ("e" * 32 + ".nca")).write_bytes(b"modified fixture")
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
+            xci.content_path(rec, 3, self.ncas, set(),
+                             allow_modified_program=True)
+
+    def test_modified_program_size_still_rejected(self):
+        entry = self.content("f" * 32, b"original fixture", 1)
+        rec = record(0x80, TITLE, 0, [entry])
+        (self.ncas / ("f" * 32 + ".nca")).write_bytes(b"changed length!")
+        with self.assertRaisesRegex(ValueError, "unexpected NCA"):
+            xci.content_path(rec, 1, self.ncas, set(),
+                             allow_modified_program=True)
+
     def test_base_and_update_program_extraction(self):
         base_program = self.content("a" * 32, b"base-program", 1)
         update_program = self.content("b" * 32, b"update-program", 1)
