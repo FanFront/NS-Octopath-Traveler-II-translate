@@ -58,6 +58,32 @@ This step:
 
 If the extraction fails, the temporary partial files are removed. Errors from hactool are **not dumped** because they may contain key material. `--no-dlc` is available to omit optional DLC on an initial trial.
 
+### Optional DLC NCA modified by a voice patch
+
+If the base+v1.1.1 extraction already succeeds with `--no-dlc`, preserve that output. The optional DLC associated with `0100a3501946f001` may also be modified: for example `2fc783db1f9b699e40fad8c7cf676fd2.nca` can differ from its CNMT SHA-256. This is **not proof** that it is a legitimate voice mod; an invalid/corrupt NCA has the same symptom.
+
+To try extracting the DLC from a source you trust, use **two independent opt-ins** and a **new output directory**:
+
+```bash
+cd /ossdata/NS-Octopath-Traveler-II-translate
+git pull --ff-only
+umask 077
+
+python3 -m scripts.extract_xci_local /ossdata/prodkeys/game.xci \
+  --keys /ossdata/prodkeys/hactool.keys \
+  --hactool "$(command -v hactool)" \
+  --output /ossdata/ot2-decrypted-with-dlc \
+  --title-id 0100a3501946e000 --version 131072 \
+  --allow-modified-program-nca \
+  --allow-modified-dlc-nca
+```
+
+Unlike `--no-dlc`, this processes optional DLC. `--allow-modified-dlc-nca` applies only to **DLC (CNMT type 0x82) Data (NCA content type 2)** hash mismatches. NCA sizes still must match CNMT, and hactool must extract a nonempty RomFS with the expected DLC Title ID. Program NCA still requires its separate flag, and Control/Meta NCA remain strictly checked. The modified file names are recorded in the local manifest under `modified_dlc_ncas`. No override authenticates the mod's source or verifies the Chinese voice audio itself.
+
+If full DLC extraction fails, the original no-DLC output remains usable for `inspect-extracted` and Android build experiments.
+
+In the GitHub Actions build workflow, enable `allow_modified_program_nca` and `allow_modified_dlc_nca` only for your trusted XCI. Both options default to **false**; the R2 object is downloaded read-only and artifacts remain GitHub-only.
+
 ### Voice-modded XCI with a Program NCA CNMT hash mismatch
 
 A Chinese-voice mod can legitimately produce bytes different from those listed in the original CNMT, but a mismatch is **not proof** of a valid voice patch. It may also indicate corruption or a different modification. The default remains strict.
