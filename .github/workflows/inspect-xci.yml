@@ -1,0 +1,33 @@
+name: Inspect XCI from Cloudflare R2 (no keys)
+
+on:
+  workflow_dispatch:
+    inputs:
+      r2_object_key:
+        description: "Path to your existing .xci object in R2 (no upload, no full download)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  inspect-xci:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+      AWS_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      AWS_DEFAULT_REGION: auto
+      R2_OBJECT_KEY: ${{ inputs.r2_object_key }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Install R2 S3 client
+        run: python3 -m pip install boto3
+      - name: Probe XCI headers and secure partition (no game content upload)
+        run: python3 scripts/probe_xci.py --r2-key "$R2_OBJECT_KEY"
