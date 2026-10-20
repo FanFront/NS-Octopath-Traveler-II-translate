@@ -150,6 +150,46 @@ class XCIExtractionTests(unittest.TestCase):
         self.assertTrue(any(any(str(a).startswith("--basenca=") for a in invocation)
                             for invocation in calls))
 
+    def test_empty_dlc_reports_file_count_without_accepting_it(self):
+        base_program = self.content("a" * 32, b"base program", 1)
+        update_program = self.content("b" * 32, b"update program", 1)
+        control = self.content("c" * 32, b"control record", 3)
+        dlc_data = self.content("d" * 32, b"dlc public data", 2)
+        base = record(0x80, TITLE, 0, [base_program])
+        patch_record = record(0x81, "0100a3501946e800", 131072,
+                              [update_program, control])
+        dlc = record(0x82, "0100a3501946f001", 0, [dlc_data])
+
+        def fake_hactool(binary, keys, *args):
+            if "--listromfs" in args:
+                return "Visiting romfs\\nrom:file-one\\nrom:file-two\\n"
+            if any(str(x).startswith("--exefsdir=") for x in args):
+                exe = Path(next(str(x).split("=", 1)[1] for x in args
+                                if str(x).startswith("--exefsdir=")))
+                exe.mkdir(parents=True)
+                (exe / "main").write_bytes(b"NSO0")
+                romfs = Path(next(str(x).split("=", 1)[1] for x in args
+                                  if str(x).startswith("--romfsdir=")))
+                romfs.mkdir(parents=True)
+                (romfs / "test.pak").write_bytes(b"pak")
+                return ""
+            dirs = [str(x).split("=", 1)[1] for x in args
+                    if str(x).startswith("--romfsdir=")]
+            if dirs and "AddOnContent" in dirs[0]:
+                return ("Title ID: 0100a3501946f001\\n"
+                        "Partition Type: RomFS\\n")
+            if dirs:
+                control_root = Path(dirs[0])
+                control_root.mkdir(parents=True)
+                (control_root / "control.nacp").write_bytes(bytes(0x3070))
+            return ""
+
+        with patch.object(xci, "inventory", return_value=[base, patch_record, dlc]), \\
+             patch.object(xci, "hactool", side_effect=fake_hactool):
+            with self.assertRaisesRegex(ValueError, r"reported 2 file entries"):
+                xci.extract(self.ncas, self.stage, "hactool", Path("local.keys"),
+                            TITLE, 131072)
+
     def test_reject_missing_update(self):
         base_program = self.content("a" * 32, b"base-program", 1)
         base = record(0x80, TITLE, 0, [base_program])
