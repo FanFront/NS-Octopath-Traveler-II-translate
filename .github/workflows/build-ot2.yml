@@ -12,6 +12,11 @@ on:
         type: boolean
         required: false
         default: false
+      allow_modified_dlc_nca:
+        description: "Trust a modded XCI: allow DLC PublicData NCA SHA mismatch only (advanced)"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -34,6 +39,7 @@ jobs:
       AWS_DEFAULT_REGION: auto
       R2_OBJECT_KEY: ${{ inputs.r2_object_key }}
       ALLOW_MODIFIED_PROGRAM_NCA: ${{ inputs.allow_modified_program_nca }}
+      ALLOW_MODIFIED_DLC_NCA: ${{ inputs.allow_modified_dlc_nca }}
       S2A_SCRATCH: ${{ vars.S2A_SCRATCH }}
       S2A_LOCAL_KEYS_PATH: ${{ vars.S2A_LOCAL_KEYS_PATH }}
       TITLE_ID: "0100a3501946e000"
@@ -109,6 +115,9 @@ jobs:
               xci_flags=()
               if [[ "$ALLOW_MODIFIED_PROGRAM_NCA" == "true" ]]; then
                 xci_flags+=(--allow-modified-program-nca)
+              fi
+              if [[ "$ALLOW_MODIFIED_DLC_NCA" == "true" ]]; then
+                xci_flags+=(--allow-modified-dlc-nca)
               fi
               .venv/bin/python -m scripts.extract_xci_local "$destination" \
                 --keys "$S2A_LOCAL_KEYS_PATH" \
