@@ -68,6 +68,44 @@ class XCIExtractionTests(unittest.TestCase):
             xci.content_path(rec, 1, self.ncas, set(),
                              allow_modified_program=True)
 
+    def test_modified_dlc_requires_separate_opt_in(self):
+        entry = self.content("1" * 32, b"original DLC data", 2)
+        rec = record(0x82, "0100a3501946f001", 0, [entry])
+        path = self.ncas / ("1" * 32 + ".nca")
+        path.write_bytes(b"modified DLC data")
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
+            xci.content_path(rec, 2, self.ncas, set(), allow_modified_program=True)
+        accepted = set()
+        self.assertEqual(xci.content_path(
+            rec, 2, self.ncas, set(), allow_modified_dlc_data=True,
+            modified_dlc_names=accepted), path)
+        self.assertEqual(accepted, {path.name})
+
+    def test_modified_dlc_still_checks_size(self):
+        entry = self.content("2" * 32, b"original DLC data", 2)
+        rec = record(0x82, "0100a3501946f001", 0, [entry])
+        (self.ncas / ("2" * 32 + ".nca")).write_bytes(b"damaged")
+        with self.assertRaisesRegex(ValueError, "unexpected NCA"):
+            xci.content_path(rec, 2, self.ncas, set(),
+                             allow_modified_dlc_data=True)
+
+    def test_modified_dlc_flag_cannot_bypass_control_hash(self):
+        entry = self.content("3" * 32, b"original Control", 3)
+        rec = record(0x81, "0100a3501946e800", 131072, [entry])
+        (self.ncas / ("3" * 32 + ".nca")).write_bytes(b"modified Control")
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
+            xci.content_path(rec, 3, self.ncas, set(),
+                             allow_modified_program=True,
+                             allow_modified_dlc_data=True)
+
+    def test_modified_dlc_flag_cannot_bypass_non_dlc_data(self):
+        entry = self.content("4" * 32, b"original data", 2)
+        rec = record(0x80, TITLE, 0, [entry])
+        (self.ncas / ("4" * 32 + ".nca")).write_bytes(b"modified data")
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
+            xci.content_path(rec, 2, self.ncas, set(),
+                             allow_modified_dlc_data=True)
+
     def test_base_and_update_program_extraction(self):
         base_program = self.content("a" * 32, b"base-program", 1)
         update_program = self.content("b" * 32, b"update-program", 1)
