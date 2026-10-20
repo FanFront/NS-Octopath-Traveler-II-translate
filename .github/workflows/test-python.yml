@@ -1,0 +1,23 @@
+name: Code tests (no game files)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  unit-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Compile and test packaging code
+        run: |
+          python3 -m compileall -q s2a scripts/unpack_decrypted.py
+          python3 -m unittest discover -s tests -v
+          python3 switch2android.py --help
