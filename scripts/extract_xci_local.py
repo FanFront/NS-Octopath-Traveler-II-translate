@@ -60,7 +60,8 @@ def inventory(directory, meta_tmp, binary, keys):
 
 
 def content_path(record, kind, directory, verified, allow_modified_program=False,
-                 modified_program_names=None):
+                 modified_program_names=None, allow_modified_dlc_data=False,
+                 modified_dlc_names=None):
     matches = [c for c in record["contents"] if c["type"] == kind]
     if len(matches) != 1 or matches[0]["id_offset"] != 0:
         raise ValueError("Expected exactly one matching NCA content in CNMT")
@@ -70,19 +71,31 @@ def content_path(record, kind, directory, verified, allow_modified_program=False
         raise ValueError("Missing or unexpected NCA: " + nca.name)
     if nca.name not in verified:
         if sha256(nca) != item["sha256"]:
-            if not (kind == 1 and allow_modified_program):
+            is_program = kind == 1 and allow_modified_program
+            is_dlc_data = (kind == 2 and record["type"] == 0x82
+                           and allow_modified_dlc_data)
+            if not (is_program or is_dlc_data):
+                hint = ("--allow-modified-dlc-nca" if kind == 2 and record["type"] == 0x82
+                        else "--allow-modified-program-nca" if kind == 1
+                        else "no override available for this content type")
                 raise ValueError("NCA hash mismatch against CNMT: " + nca.name +
-                                 " (use --allow-modified-program-nca only if you trust this modification)")
-            print("WARNING: Program NCA differs from its CNMT SHA-256: " + nca.name +
-                  "; explicitly accepting modified executable/resource container", flush=True)
-            if modified_program_names is not None:
-                modified_program_names.add(nca.name)
+                                 " (" + hint + "; only if you trust this modification)")
+            if is_program:
+                print("WARNING: Program NCA differs from its CNMT SHA-256: " + nca.name +
+                      "; explicitly accepting modified executable/resource container", flush=True)
+                if modified_program_names is not None:
+                    modified_program_names.add(nca.name)
+            if is_dlc_data:
+                print("WARNING: DLC Data NCA differs from its CNMT SHA-256: " + nca.name +
+                      "; explicitly accepting modified DLC content", flush=True)
+                if modified_dlc_names is not None:
+                    modified_dlc_names.add(nca.name)
         verified.add(nca.name)
     return nca
 
 
 def extract(ncas, staging, binary, keys, title, version, include_dlc=True,
-            allow_modified_program=False):
+            allow_modified_program=False, allow_modified_dlc=False):
     metadata_dir = staging / "metadata"
     metadata_dir.mkdir()
     records = inventory(ncas, metadata_dir, binary, keys)
@@ -93,6 +106,7 @@ def extract(ncas, staging, binary, keys, title, version, include_dlc=True,
         raise ValueError("Unexpected game title")
     verified = set()
     modified_program_names = set()
+    modified_dlc_names = set()
     base_program = content_path(base, 1, ncas, verified,
                                 allow_modified_program=allow_modified_program,
                                 modified_program_names=modified_program_names)
@@ -121,11 +135,16 @@ def extract(ncas, staging, binary, keys, title, version, include_dlc=True,
                  .decode("utf-8", "replace") for i in range(16)
                  if raw[i * 0x300]), title)
     for index, record in dlcs.items():
-        dlc_nca = content_path(record, 2, ncas, verified)
+        dlc_nca = content_path(record, 2, ncas, verified,
+                               allow_modified_dlc_data=allow_modified_dlc,
+                               modified_dlc_names=modified_dlc_names)
         dlc_dir = target / "AddOnContent" / str(index)
-        hactool(binary, keys, "-t", "nca",
-                "--romfsdir=" + str(dlc_dir), dlc_nca)
-        if not dlc_dir.is_dir():
+        info = hactool(binary, keys, "-t", "nca",
+                       "--romfsdir=" + str(dlc_dir), dlc_nca)
+        if not re.search(r"Partition Type:\\s*RomFS", info) or not re.search(
+                rf"Title ID:\\s*{record['title_id']}\\b", info, re.I):
+            raise ValueError("DLC NCA does not contain a matching, readable RomFS")
+        if not dlc_dir.is_dir() or not any(dlc_dir.rglob("*")):
             raise ValueError("DLC extraction failed for index %d" % index)
     profile_path = Path(__file__).resolve().parents[1] / "profiles" / (title + ".json")
     profile = json.loads(profile_path.read_text())
@@ -139,6 +158,7 @@ def extract(ncas, staging, binary, keys, title, version, include_dlc=True,
     manifest = dict(schema=1, id=identifier, title_id=title,
                     name=name, version=version, display_version=display,
                     modified_program_ncas=sorted(modified_program_names),
+                    modified_dlc_ncas=sorted(modified_dlc_names),
                     dlc=[dict(index=i, **packages.public_record(r))
                          for i, r in dlcs.items()])
     (target / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -147,6 +167,9 @@ def extract(ncas, staging, binary, keys, title, version, include_dlc=True,
     if modified_program_names:
         print("WARNING: %d Program NCA(s) passed only with a CNMT hash mismatch override" %
               len(modified_program_names), flush=True)
+    if modified_dlc_names:
+        print("WARNING: %d DLC NCA(s) passed only with a CNMT hash mismatch override" %
+              len(modified_dlc_names), flush=True)
     return target
 
 
@@ -165,6 +188,10 @@ def main():
         "--allow-modified-program-nca", action="store_true",
         help="opt-in: accept Program NCA SHA-256 mismatches only (for trusted voice patches); "
              "still require correct size, decryption, Title ID, v1.1.1 and main Build ID")
+    parser.add_argument(
+        "--allow-modified-dlc-nca", action="store_true",
+        help="opt-in: accept DLC PublicData NCA SHA-256 mismatches only; "
+             "still verify size, decryptability, DLC title ID and RomFS")
     args = parser.parse_args()
     xci, keys, output = args.xci.resolve(), args.keys.resolve(), args.output.resolve()
     if not xci.is_file() or xci.suffix.lower() != ".xci":
@@ -186,7 +213,8 @@ def main():
         source = extract(ncas, stage, args.hactool, keys,
                          args.title_id.lower(), args.version,
                          include_dlc=not args.no_dlc,
-                         allow_modified_program=args.allow_modified_program_nca)
+                         allow_modified_program=args.allow_modified_program_nca,
+                         allow_modified_dlc=args.allow_modified_dlc_nca)
         source.rename(output)
     print("Decrypted game ready at " + str(output), flush=True)
 
