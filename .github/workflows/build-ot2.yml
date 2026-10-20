@@ -17,6 +17,11 @@ on:
         type: boolean
         required: false
         default: false
+      skip_dlc:
+        description: "Skip optional DLC and use base+1.1.1 update only"
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -40,6 +45,7 @@ jobs:
       R2_OBJECT_KEY: ${{ inputs.r2_object_key }}
       ALLOW_MODIFIED_PROGRAM_NCA: ${{ inputs.allow_modified_program_nca }}
       ALLOW_MODIFIED_DLC_NCA: ${{ inputs.allow_modified_dlc_nca }}
+      SKIP_DLC: ${{ inputs.skip_dlc }}
       S2A_SCRATCH: ${{ vars.S2A_SCRATCH }}
       S2A_LOCAL_KEYS_PATH: ${{ vars.S2A_LOCAL_KEYS_PATH }}
       TITLE_ID: "0100a3501946e000"
@@ -118,6 +124,9 @@ jobs:
               fi
               if [[ "$ALLOW_MODIFIED_DLC_NCA" == "true" ]]; then
                 xci_flags+=(--allow-modified-dlc-nca)
+              fi
+              if [[ "$SKIP_DLC" == "true" ]]; then
+                xci_flags+=(--no-dlc)
               fi
               .venv/bin/python -m scripts.extract_xci_local "$destination" \
                 --keys "$S2A_LOCAL_KEYS_PATH" \
