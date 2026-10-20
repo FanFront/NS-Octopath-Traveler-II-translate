@@ -144,8 +144,17 @@ def extract(ncas, staging, binary, keys, title, version, include_dlc=True,
         if not re.search(r"Partition Type:\s*RomFS", info) or not re.search(
                 rf"Title ID:\s*{record['title_id']}\b", info, re.I):
             raise ValueError("DLC NCA does not contain a matching, readable RomFS")
-        if not dlc_dir.is_dir() or not any(dlc_dir.rglob("*")):
-            raise ValueError("DLC extraction failed for index %d" % index)
+        if not dlc_dir.is_dir() or not any(p.is_file() for p in dlc_dir.rglob("*")):
+            # A recognised RomFS section is not proof that hactool wrote files.
+            # Count entries without revealing file names or raw hactool output.
+            listed = hactool(binary, keys, "-t", "nca", "--listromfs", dlc_nca)
+            count = sum(line.startswith("rom:") for line in listed.splitlines())
+            raise ValueError(
+                "DLC extraction failed for index %d: hactool wrote no RomFS files; "
+                "--listromfs reported %d file entries. "
+                "The DLC may be empty, modified, or incompatible with this hactool; "
+                "use --no-dlc to build the validated base + 1.1.1 update instead."
+                % (index, count))
     profile_path = Path(__file__).resolve().parents[1] / "profiles" / (title + ".json")
     profile = json.loads(profile_path.read_text())
     game = make_profile(target, title, version, display)
