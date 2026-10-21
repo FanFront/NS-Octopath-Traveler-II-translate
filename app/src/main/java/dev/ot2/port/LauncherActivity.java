@@ -17,6 +17,8 @@ public final class LauncherActivity extends Activity {
     private JSONObject config;
     private TextView status;
     private Button select;
+    private Button play;
+    private Button settings;
     private boolean importing;
     private final android.window.OnBackInvokedCallback back = () -> {if(!importing)finish();};
     @Override public void onCreate(Bundle state) {
@@ -31,10 +33,19 @@ public final class LauncherActivity extends Activity {
             Intent pick = new Intent(Intent.ACTION_OPEN_DOCUMENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE);
             startActivityForResult(pick, 1);
         });
+        settings = new Button(this);
+        settings.setText("运行设置：掌机／底座 · 30／60 FPS");
+        settings.setOnClickListener(v -> RuntimeSettings.showDialog(this, () -> {}));
+        layout.addView(settings);
+        play = new Button(this);
+        play.setText("开始游戏");
+        play.setVisibility(android.view.View.GONE);
+        play.setOnClickListener(v -> launch());
+        layout.addView(play);
         setContentView(layout);
         try {
             config = BundleInstaller.configuration(this);
-            if (BundleInstaller.ready(this, config)) {launch(); return;}
+            if (BundleInstaller.ready(this, config)) {ready(); return;}
             status.setText(config.getString("name") + "\n首次运行需要导入同一次构建生成的资源包。之后无需电脑或网络。\n支持实体手柄；未连接时自动显示屏幕按键。\n");
             File incoming = new File(getExternalFilesDir(null), "incoming.s2a");
             if (config.optBoolean("embedded")) begin(() -> getAssets().open("game.s2a"), null);
@@ -51,7 +62,7 @@ public final class LauncherActivity extends Activity {
                 if (input == null) throw new java.io.IOException("Cannot open selected resource bundle");
                 BundleInstaller.install(getApplicationContext(), config, input, text -> runOnUiThread(() -> status.setText(text)));
                 if (removable != null && !removable.delete()) android.util.Log.w("Switch2Android", "Imported input retained");
-                runOnUiThread(this::launch);
+                runOnUiThread(this::ready);
             } catch (Exception error) {
                 runOnUiThread(() -> {importing = false; select.setEnabled(true); status.setText("导入失败：" + error.getMessage() + "\n原有存档未受影响。请选择正确的资源包重试。"); getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);});
             }
@@ -64,6 +75,15 @@ public final class LauncherActivity extends Activity {
         }
     }
     @Override protected void onDestroy(){getOnBackInvokedDispatcher().unregisterOnBackInvokedCallback(back);super.onDestroy();}
+    private void ready() {
+        importing = false;
+        getWindow().clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        select.setVisibility(android.view.View.GONE);
+        play.setVisibility(android.view.View.VISIBLE);
+        play.setEnabled(true);
+        status.setText("游戏资源已导入。可以先选择掌机或底座模式、30 或 60 FPS，再进入游戏。\n" +
+            "底座模式不保证内部 1080p，60 FPS 是实验性功能；切换模式后可能需要完全退出并重新打开游戏。");
+    }
     private void launch() {
         startActivity(new Intent(this, MainActivity.class).putExtra("input_trace",getIntent().getBooleanExtra("input_trace",false))); finish();
     }

@@ -38,6 +38,9 @@ std::string romfs,user;
 std::map<int,std::string> addon_content;
 uint64_t program_id=legacy_ot2_program_id;
 std::mutex activity_mutex;bool activity_active=true,focus_notification=false;unsigned activity_focus=1;
+std::atomic<unsigned> operation_mode{0};
+bool operation_notification=false,performance_notification=false;
+bool operation_notify_enabled=false,performance_notify_enabled=false;
 std::chrono::steady_clock::time_point active_since=std::chrono::steady_clock::now();
 uint64_t active_ns=0;
 uint64_t active_time(){std::lock_guard lock(activity_mutex);return active_ns+(activity_active?std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::steady_clock::now()-active_since).count():0);}
@@ -280,6 +283,16 @@ void set_activity_focus(unsigned state){
     set_audio_active(state==1);
 }
 void set_activity_active(bool active){set_activity_focus(active?1:2);}
+void set_operation_mode(unsigned mode){
+    if(mode>1)return;
+    const auto previous=operation_mode.exchange(mode,std::memory_order_relaxed);
+    if(previous==mode)return;
+    std::lock_guard lock(activity_mutex);
+    if(operation_notify_enabled)operation_notification=true;
+    if(performance_notify_enabled)performance_notification=true;
+    ot2_host_log("OPERATION_MODE mode=%u",mode);
+}
+unsigned get_operation_mode(){return operation_mode.load(std::memory_order_relaxed);}
 const std::vector<HostService>& host_services() {
     static const std::vector<HostService> services={
         {"_ZN2nv18InitializeGraphicsEPvm",[](Registers)->uint64_t{vkhost_init();return 0;}},
@@ -420,17 +433,30 @@ const std::vector<HostService>& host_services() {
         {"_ZN2nn3err9ShowErrorENS_6ResultE",[](Registers r)->uint64_t{ot2_host_log("SDK_ERROR result=%x module=%u description=%u",unsigned(r[0]),unsigned(r[0])&511,unsigned(r[0])>>9);return 0;}},
         {"_ZN2nn2oe18GetDesiredLanguageEv",[](Registers)->uint64_t{uint64_t code=0;memcpy(&code,"zh-Hans",7);return code;}},
         {"_ZN2nn2oe25GetProgramTotalActiveTimeEv",[](Registers)->uint64_t{return active_time();}},
-        {"_ZN2nn2oe16GetOperationModeEv",ok},
-        {"_ZN2nn2oe18GetPerformanceModeEv",ok},
+        {"_ZN2nn2oe16GetOperationModeEv",[](Registers)->uint64_t{return get_operation_mode();}},
+        {"_ZN2nn2oe18GetPerformanceModeEv",[](Registers)->uint64_t{return get_operation_mode();}},
         {"_ZN2nn2oe20GetCurrentFocusStateEv",[](Registers)->uint64_t{std::lock_guard lock(activity_mutex);return activity_focus;}},
-        {"_ZN2nn2oe25TryPopNotificationMessageEPj",[](Registers r)->uint64_t{std::lock_guard lock(activity_mutex);if(!focus_notification)return 0;*ptr<uint32_t>(r[0])=15;focus_notification=false;return 1;}},
+        {"_ZN2nn2oe25TryPopNotificationMessageEPj",[](Registers r)->uint64_t{
+            std::lock_guard lock(activity_mutex);
+            if(!r[0])return 0;
+            if(focus_notification){*ptr<uint32_t>(r[0])=15;focus_notification=false;return 1;}
+            if(operation_notification){*ptr<uint32_t>(r[0])=30;operation_notification=false;return 1;}
+            if(performance_notification){*ptr<uint32_t>(r[0])=31;performance_notification=false;return 1;}
+            return 0;
+        }},
         {"_ZN2nn2oe17FinishStartupLogoEv",ok},
         {"_ZN2nn2oe15SetCpuBoostModeENS0_12CpuBoostModeE",ok},
         {"_ZN2nn2oe27SetPerformanceConfigurationENS0_15PerformanceModeEi",ok},
         {"_ZN2nn2oe20SetFocusHandlingModeENS0_17FocusHandlingModeE",ok},
         {"_ZN2nn2oe28SetResumeNotificationEnabledEb",ok},
-        {"_ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb",ok},
-        {"_ZN2nn2oe44SetPerformanceModeChangedNotificationEnabledEb",ok},
+        {"_ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb",[](Registers r)->uint64_t{
+            std::lock_guard lock(activity_mutex);operation_notify_enabled=r[0]!=0;
+            if(!operation_notify_enabled)operation_notification=false;return 0;
+        }},
+        {"_ZN2nn2oe44SetPerformanceModeChangedNotificationEnabledEb",[](Registers r)->uint64_t{
+            std::lock_guard lock(activity_mutex);performance_notify_enabled=r[0]!=0;
+            if(!performance_notify_enabled)performance_notification=false;return 0;
+        }},
         {"_ZN2nn2oe38SetUserInactivityDetectionTimeExtendedEb",ok},
         {"_ZN2nn2oe31EnterExitRequestHandlingSectionEv",ok},
         {"_ZN2nn2oe31LeaveExitRequestHandlingSectionEv",ok},

@@ -41,6 +41,7 @@ public final class MainActivity extends Activity implements InputManager.InputDe
     private static native long getNativeFrameCount();
     private static native double[] getNativeFrameStats();
     private static native int setNativeTargetFps(int target);
+    private static native void setNativeOperationMode(int mode);
     private Surface frameRateSurface;
     private int hintedFrameRate;
     private int applyTargetFps(int target){
@@ -62,6 +63,13 @@ public final class MainActivity extends Activity implements InputManager.InputDe
         return applied;
     }
     private PerformanceHud performanceHud;
+    private void refreshRuntimeSettings(){
+        setNativeOperationMode(RuntimeSettings.operationMode(this));
+        if(performanceHud!=null){
+            performanceHud.refreshSettings();
+            performanceHud.setVisibility(RuntimeSettings.showHud(this)?View.VISIBLE:View.GONE);
+        }
+    }
     private static native void setNativeFocus(int state);
     private static native int takeNativeSaveNotice();
     private static native String[] getNativeTextInput();
@@ -203,7 +211,7 @@ public final class MainActivity extends Activity implements InputManager.InputDe
     @Override public void onInputDeviceChanged(int id) {if(id==controllerId)releaseInput();refreshController();}
     @Override public void onInputDeviceRemoved(int id) {if(id==controllerId){releaseInput();controllerId=-1;}refreshController();}
     @Override protected void onStart(){super.onStart();activitySession.start(this);}
-    @Override protected void onResume(){super.onResume();resumed=true;refreshAutomationInput();getSystemService(InputManager.class).registerInputDeviceListener(this,null);activitySession.resume(this,hasWindowFocus());refreshController();noticeHandler.post(noticePoll);if(performanceHud!=null)performanceHud.start();}
+    @Override protected void onResume(){super.onResume();resumed=true;refreshRuntimeSettings();refreshAutomationInput();getSystemService(InputManager.class).registerInputDeviceListener(this,null);activitySession.resume(this,hasWindowFocus());refreshController();noticeHandler.post(noticePoll);if(performanceHud!=null)performanceHud.start();}
     @Override public void onWindowFocusChanged(boolean focused){super.onWindowFocusChanged(focused);if(resumed){activitySession.focus(this,focused);if(!focused)releaseInput();}}
     @Override protected void onPause(){resumed=false;noticeHandler.removeCallbacks(noticePoll);if(performanceHud!=null)performanceHud.stop();if(saveDialog!=null)saveDialog.dismiss();if(textDialog!=null)textDialog.dismiss();getSystemService(InputManager.class).unregisterInputDeviceListener(this);activitySession.pause(this);releaseInput();super.onPause();}
     @Override protected void onStop(){activitySession.stop(this);super.onStop();}
@@ -211,6 +219,7 @@ public final class MainActivity extends Activity implements InputManager.InputDe
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
+        setNativeOperationMode(RuntimeSettings.operationMode(this)); // Before the first guest mode query.
         inputTrace=getIntent().getBooleanExtra("input_trace",false);setNativeInputTrace(inputTrace);
         LinearLayout layout = new LinearLayout(this);
         layout.setOrientation(LinearLayout.VERTICAL);
@@ -254,8 +263,26 @@ public final class MainActivity extends Activity implements InputManager.InputDe
             FrameLayout.LayoutParams hudParams=new FrameLayout.LayoutParams(-2,-2,android.view.Gravity.TOP|android.view.Gravity.START);
             int margin=Math.round(12*getResources().getDisplayMetrics().density);
             hudParams.setMargins(margin,margin,margin,margin);root.addView(performanceHud,hudParams);
-            performanceHud.setOnClickListener(v->performanceHud.setVisibility(View.GONE));
-            root.postDelayed(()->{if(performanceHud!=null&&!isDestroyed())performanceHud.setVisibility(View.GONE);},6000);
+            performanceHud.setVisibility(RuntimeSettings.showHud(this)?View.VISIBLE:View.GONE);
+            performanceHud.setOnClickListener(v->{RuntimeSettings.setShowHud(this,false);performanceHud.setVisibility(View.GONE);});
+            Button runtimeSettings=new Button(this);
+            runtimeSettings.setText("⚙");
+            runtimeSettings.setContentDescription("运行设置：掌机或底座模式，30 或 60 FPS");
+            runtimeSettings.setTextSize(18);
+            runtimeSettings.setAllCaps(false);
+            FrameLayout.LayoutParams settingsParams=new FrameLayout.LayoutParams(
+                Math.round(52*getResources().getDisplayMetrics().density),
+                Math.round(48*getResources().getDisplayMetrics().density),
+                android.view.Gravity.TOP|android.view.Gravity.END);
+            settingsParams.setMargins(margin,margin,margin,margin);
+            root.addView(runtimeSettings,settingsParams);
+            runtimeSettings.setOnClickListener(v->RuntimeSettings.showDialog(this,this::refreshRuntimeSettings));
+            runtimeSettings.setOnApplyWindowInsetsListener((view,insets)->{
+                android.graphics.Insets safe=insets.getInsets(android.view.WindowInsets.Type.displayCutout());
+                FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)view.getLayoutParams();
+                p.setMargins(margin,margin+safe.top,margin+safe.right,margin);
+                view.setLayoutParams(p);return insets;
+            });
             performanceHud.setOnApplyWindowInsetsListener((view,insets)->{
                 android.graphics.Insets safe=insets.getInsets(android.view.WindowInsets.Type.displayCutout());
                 FrameLayout.LayoutParams p=(FrameLayout.LayoutParams)view.getLayoutParams();

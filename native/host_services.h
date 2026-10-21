@@ -12,6 +12,10 @@ void set_activity_active(bool active);
 void set_io_prefetch(bool enabled);
 // nn::oe::FocusState: 1 = focused, 2 = visible without focus, 3 = background.
 void set_activity_focus(unsigned state);
+// nn::oe::OperationMode: handheld = 0, console/docked = 1.
+// The Android frontend sets this before boot; changes are synchronized and notified.
+void set_operation_mode(unsigned mode);
+unsigned get_operation_mode();
 void set_audio_active(bool active);
 bool probe_audio_recovery();
 // Legacy profile only. New launches supply the validated game's ProgramId.
