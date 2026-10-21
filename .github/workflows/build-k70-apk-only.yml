@@ -1,16 +1,23 @@
 name: OT2 K70 APK-only (GitHub hosted)
 
 on:
+  # A one-time request-file change triggers the initial build without a dispatch API.
+  push:
+    branches: [main]
+    paths:
+      - .github/ot2-k70-build-request.txt
   workflow_dispatch:
     inputs:
       bundle_id:
         description: "Existing game.s2a bundle_id from old package.json (64 lowercase hex characters)"
         type: string
         required: true
+        default: "9f94b1abd6bf80bc699b07a552ac5ab1e8b8972f23aedd327920546858702c22"
       total_bytes:
         description: "Existing package.json total_bytes (decimal integer; NOT the game.s2a ZIP file size)"
         type: string
         required: true
+        default: "6710458571"
       installation_mode:
         description: "Install as a separate app (recommended) or reuse the old package name after uninstall"
         type: choice
@@ -62,8 +69,8 @@ jobs:
       - name: Create APK-only launch metadata matching already imported game
         shell: bash
         env:
-          EXISTING_BUNDLE_ID: ${{ inputs.bundle_id }}
-          EXISTING_TOTAL_BYTES: ${{ inputs.total_bytes }}
+          EXISTING_BUNDLE_ID: ${{ inputs.bundle_id || '9f94b1abd6bf80bc699b07a552ac5ab1e8b8972f23aedd327920546858702c22' }}
+          EXISTING_TOTAL_BYTES: ${{ inputs.total_bytes || '6710458571' }}
         run: |
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/ot2-apk-assets"
@@ -87,7 +94,7 @@ jobs:
       - name: Choose app identity
         shell: bash
         env:
-          INSTALLATION_MODE: ${{ inputs.installation_mode }}
+          INSTALLATION_MODE: ${{ inputs.installation_mode || 'side_by_side' }}
         run: |
           set -euo pipefail
           case "$INSTALLATION_MODE" in
@@ -108,6 +115,7 @@ jobs:
           set -euo pipefail
           umask 077
           mkdir -p "$HOME/.android"
+          rm -f -- "$HOME/.android/debug.keystore"
           # Release uses the Android debug signingConfig but stays optimized/non-debuggable.
           keytool -genkeypair -noprompt \
             -keystore "$HOME/.android/debug.keystore" \
@@ -142,7 +150,7 @@ jobs:
           This APK uses a new signing key unrelated to the previous game APK.
           App ID: $APP_ID
           Game title: OCTOPATH TRAVELER II
-          Mode: ${{ inputs.installation_mode }}
+          Mode: ${{ inputs.installation_mode || 'side_by_side' }}
           The matching game.s2a must be imported again into this new installation.
           For side_by_side, the existing app and its saves remain intact.
           For replace_after_uninstall, first uninstall the previous package (deletes its saves).
