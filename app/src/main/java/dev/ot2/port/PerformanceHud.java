@@ -39,6 +39,7 @@ final class PerformanceHud extends TextView {
         setText("FPS --  ·  -- ms\n功耗 -- W");
     }
     private int dp(int value){return Math.round(value*getResources().getDisplayMetrics().density);}
+    void refreshSettings(){policy.invalidate();setTarget.applyAsInt(policy.target());}
     void start(){if(active)return;active=true;power.start();handler.post(refresh);}
     void stop(){active=false;handler.removeCallbacks(refresh);power.stop();}
 }
