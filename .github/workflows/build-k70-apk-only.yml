@@ -11,6 +11,14 @@ on:
         description: "Existing package.json total_bytes (decimal integer; NOT the game.s2a ZIP file size)"
         type: string
         required: true
+      installation_mode:
+        description: "Install as a separate app (recommended) or reuse the old package name after uninstall"
+        type: choice
+        required: true
+        default: side_by_side
+        options:
+          - side_by_side
+          - replace_after_uninstall
 
 permissions:
   contents: read
@@ -76,22 +84,37 @@ jobs:
           print("Created APK launch metadata (no game resources)")
           PY
 
-      - name: Install original Android signing key for safe update
+      - name: Choose app identity
         shell: bash
         env:
-          ORIGINAL_DEBUG_KEYSTORE_BASE64: ${{ secrets.S2A_DEBUG_KEYSTORE_BASE64 }}
+          INSTALLATION_MODE: ${{ inputs.installation_mode }}
         run: |
           set -euo pipefail
-          if [[ -z "$ORIGINAL_DEBUG_KEYSTORE_BASE64" ]]; then
-            echo "::error::Set the S2A_DEBUG_KEYSTORE_BASE64 Actions secret from the ORIGINAL ~/.android/debug.keystore (the local APK signing key); do not generate a new key or uninstall the installed game."
-            exit 1
-          fi
-          mkdir -p "$HOME/.android"
-          umask 077
-          printf '%s' "$ORIGINAL_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
-          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey > /dev/null
-          echo "Existing debug signing key imported successfully"
+          case "$INSTALLATION_MODE" in
+            side_by_side)
+              echo "APP_ID=org.switch2android.ot2k70" >> "$GITHUB_ENV"
+              echo "Creating a separate app: original install and saves remain untouched."
+              ;;
+            replace_after_uninstall)
+              echo "APP_ID=org.switch2android.g0100a3501946e000" >> "$GITHUB_ENV"
+              echo "::warning::Fresh signing key: original APK must be uninstalled first. Uninstall deletes its imported resources and app-private saves."
+              ;;
+            *) echo "::error::Invalid installation_mode"; exit 1 ;;
+          esac
 
+      - name: Generate fresh APK signing key (no secret needed)
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$HOME/.android"
+          # Release uses the Android debug signingConfig but stays optimized/non-debuggable.
+          keytool -genkeypair -noprompt \
+            -keystore "$HOME/.android/debug.keystore" \
+            -storepass android -keypass android -alias androiddebugkey \
+            -keyalg RSA -keysize 3072 -validity 3650 \
+            -dname "CN=Switch2Android K70 Test Build,OU=Local Android,O=Personal,C=US"
+          echo "Ephemeral Android APK signing key generated"
       - name: Increase Gradle wrapper download timeout
         shell: bash
         run: |
@@ -106,7 +129,7 @@ jobs:
           ./gradlew --no-daemon :app:assembleRelease :app:lintRelease \
             "-Ps2aAssets=$RUNNER_TEMP/ot2-apk-assets" \
             "-Ps2aBuildDir=$RUNNER_TEMP/ot2-android-build" \
-            "-Ps2aAppId=org.switch2android.g0100a3501946e000" \
+            "-Ps2aAppId=$APP_ID" \
             "-Ps2aName=OCTOPATH TRAVELER II" \
             "-Ps2aVersionCode=$VERSION_CODE"
           source_apk="$RUNNER_TEMP/ot2-android-build/app/outputs/apk/release/app-release.apk"
@@ -115,6 +138,15 @@ jobs:
           cp -- "$source_apk" "$RUNNER_TEMP/ot2-apk-only/game.apk"
           (cd "$RUNNER_TEMP/ot2-apk-only" && sha256sum game.apk > game.apk.sha256)
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$RUNNER_TEMP/ot2-apk-only/game.apk"
+          cat > "$RUNNER_TEMP/ot2-apk-only/INSTALL-NOTES.txt" <<EOF
+This APK uses a new signing key unrelated to the previous game APK.
+App ID: $APP_ID
+Game title: OCTOPATH TRAVELER II
+Mode: ${{ inputs.installation_mode }}
+The matching game.s2a must be imported again into this new installation.
+For side_by_side, the existing app and its saves remain intact.
+For replace_after_uninstall, first uninstall the previous package (deletes its saves).
+EOF
 
       - name: Upload APK only (no copyrighted game resources)
         uses: actions/upload-artifact@v4
@@ -123,11 +155,12 @@ jobs:
           path: |
             ${{ runner.temp }}/ot2-apk-only/game.apk
             ${{ runner.temp }}/ot2-apk-only/game.apk.sha256
+            ${{ runner.temp }}/ot2-apk-only/INSTALL-NOTES.txt
           if-no-files-found: error
           compression-level: 0
           retention-days: 3
 
-      - name: Erase imported signing key on ephemeral runner
+      - name: Erase generated signing key on ephemeral runner
         if: always()
         shell: bash
         run: rm -f -- "$HOME/.android/debug.keystore"
