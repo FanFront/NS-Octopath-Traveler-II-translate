@@ -57,8 +57,17 @@ jobs:
           distribution: temurin
           java-version: "21"
 
-      - name: Install Android SDK command-line tools
-        uses: android-actions/setup-android@v3
+      - name: Locate GitHub-hosted Android SDK tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          test -d "$sdk" || { echo "::error::Android SDK not installed on hosted runner"; exit 1; }
+          echo "ANDROID_HOME=$sdk" >> "$GITHUB_ENV"
+          tool="$(find "$sdk/cmdline-tools" -mindepth 3 -maxdepth 3 -type f -name sdkmanager -print -quit)"
+          test -n "$tool" || { echo "::error::sdkmanager executable not found"; exit 1; }
+          echo "$(dirname "$tool")" >> "$GITHUB_PATH"
+          echo "Using sdkmanager: $tool"
 
       - name: Install Android platform, NDK, and CMake
         shell: bash
