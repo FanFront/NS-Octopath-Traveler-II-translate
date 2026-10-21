@@ -31,7 +31,9 @@ jobs:
       - name: Check out experimental performance settings
         uses: actions/checkout@v4
         with:
-          ref: feature/handheld-docked-fps-settings
+          # Pinned to the feature commit whose Python and native checks passed.
+          # Never execute an unreviewed moving branch with access to the signing key.
+          ref: 4eda964e41559a2418864f692ae8db4f241f858b
           persist-credentials: false
 
       - name: Set up Java 21
