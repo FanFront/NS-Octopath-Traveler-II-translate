@@ -1,0 +1,131 @@
+name: OT2 K70 APK-only (GitHub hosted)
+
+on:
+  workflow_dispatch:
+    inputs:
+      bundle_id:
+        description: "Existing game.s2a bundle_id from old package.json (64 lowercase hex characters)"
+        type: string
+        required: true
+      total_bytes:
+        description: "Existing package.json total_bytes (decimal integer; NOT the game.s2a ZIP file size)"
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ot2-k70-apk-only
+  cancel-in-progress: false
+
+jobs:
+  apk:
+    # No XCI download, game assets, prod.keys, hactool, or shader translation.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    env:
+      TITLE_ID: "0100a3501946e000"
+      VERSION_CODE: "131074"
+    steps:
+      - name: Check out experimental performance settings
+        uses: actions/checkout@v4
+        with:
+          ref: feature/handheld-docked-fps-settings
+          persist-credentials: false
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Install Android SDK command-line tools
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android platform, NDK, and CMake
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdkmanager "platforms;android-36" "build-tools;36.0.0" "ndk;28.2.13676358" "cmake;3.22.1" "platform-tools"
+
+      - name: Create APK-only launch metadata matching already imported game
+        shell: bash
+        env:
+          EXISTING_BUNDLE_ID: \${{ inputs.bundle_id }}
+          EXISTING_TOTAL_BYTES: \${{ inputs.total_bytes }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/ot2-apk-assets"
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          identity = os.environ["EXISTING_BUNDLE_ID"]
+          size = os.environ["EXISTING_TOTAL_BYTES"]
+          if not re.fullmatch(r"[0-9a-f]{64}", identity):
+              raise SystemExit("::error::bundle_id must be 64 lowercase hex characters")
+          if not re.fullmatch(r"[0-9]{1,19}", size) or not 0 < int(size) < 2**63:
+              raise SystemExit("::error::total_bytes must be a positive decimal integer below 2^63")
+          launch = dict(schema=1, title_id="0100a3501946e000",
+                        bundle_id=identity, total_bytes=int(size),
+                        name="OCTOPATH TRAVELER II", embedded=False)
+          (Path(os.environ["RUNNER_TEMP"]) / "ot2-apk-assets/launch.json").write_text(
+              json.dumps(launch, ensure_ascii=True, separators=(",", ":")) + "\n")
+          print("Created APK launch metadata (no game resources)")
+          PY
+
+      - name: Install original Android signing key for safe update
+        shell: bash
+        env:
+          ORIGINAL_DEBUG_KEYSTORE_BASE64: \${{ secrets.S2A_DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          set -euo pipefail
+          if [[ -z "$ORIGINAL_DEBUG_KEYSTORE_BASE64" ]]; then
+            echo "::error::Set the S2A_DEBUG_KEYSTORE_BASE64 Actions secret from the ORIGINAL ~/.android/debug.keystore (the local APK signing key); do not generate a new key or uninstall the installed game."
+            exit 1
+          fi
+          mkdir -p "$HOME/.android"
+          umask 077
+          printf '%s' "$ORIGINAL_DEBUG_KEYSTORE_BASE64" | base64 --decode > "$HOME/.android/debug.keystore"
+          keytool -list -keystore "$HOME/.android/debug.keystore" -storepass android -alias androiddebugkey > /dev/null
+          echo "Existing debug signing key imported successfully"
+
+      - name: Increase Gradle wrapper download timeout
+        shell: bash
+        run: |
+          sed -i -e 's/^networkTimeout=.*/networkTimeout=180000/' \
+                 -e 's/^retries=.*/retries=3/' \
+                 gradle/wrapper/gradle-wrapper.properties
+
+      - name: Build APK (without game.s2a)
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon :app:assembleRelease :app:lintRelease \
+            "-Ps2aAssets=$RUNNER_TEMP/ot2-apk-assets" \
+            "-Ps2aBuildDir=$RUNNER_TEMP/ot2-android-build" \
+            "-Ps2aAppId=org.switch2android.g0100a3501946e000" \
+            "-Ps2aName=OCTOPATH TRAVELER II" \
+            "-Ps2aVersionCode=$VERSION_CODE"
+          source_apk="$RUNNER_TEMP/ot2-android-build/app/outputs/apk/release/app-release.apk"
+          test -s "$source_apk"
+          mkdir -p "$RUNNER_TEMP/ot2-apk-only"
+          cp -- "$source_apk" "$RUNNER_TEMP/ot2-apk-only/game.apk"
+          (cd "$RUNNER_TEMP/ot2-apk-only" && sha256sum game.apk > game.apk.sha256)
+          "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$RUNNER_TEMP/ot2-apk-only/game.apk"
+
+      - name: Upload APK only (no copyrighted game resources)
+        uses: actions/upload-artifact@v4
+        with:
+          name: ot2-k70-settings-apk-only-\${{ github.run_number }}
+          path: |
+            \${{ runner.temp }}/ot2-apk-only/game.apk
+            \${{ runner.temp }}/ot2-apk-only/game.apk.sha256
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 3
+
+      - name: Erase imported signing key on ephemeral runner
+        if: always()
+        shell: bash
+        run: rm -f -- "$HOME/.android/debug.keystore"
