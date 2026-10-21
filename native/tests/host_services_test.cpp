@@ -44,6 +44,38 @@ int main(){
     std::ofstream(base+"/AddOnContent/1/item")<<"owned";
     std::filesystem::create_directory_symlink(base+"/rom",base+"/AddOnContent/2");
     ot2::configure_services(base+"/rom",base+"/user");
+    // Mode query and notifications follow nn::oe and preserve the existing focus queue.
+    uint32_t mode_message=0;
+    require(call("_ZN2nn2oe16GetOperationModeEv",{})==0,"handheld is default");
+    require(call("_ZN2nn2oe18GetPerformanceModeEv",{})==0,"handheld performance mode");
+    ot2::set_operation_mode(1);
+    require(call("_ZN2nn2oe16GetOperationModeEv",{})==1 &&
+            call("_ZN2nn2oe18GetPerformanceModeEv",{})==1,"docked/boost operation queries");
+    require(!call("_ZN2nn2oe25TryPopNotificationMessageEPj",{address(&mode_message)}),
+            "no operation-mode message before subscription");
+    call("_ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb",{1});
+    call("_ZN2nn2oe44SetPerformanceModeChangedNotificationEnabledEb",{1});
+    ot2::set_operation_mode(0);
+    require(call("_ZN2nn2oe16GetOperationModeEv",{})==0,"handheld mode restores");
+    require(call("_ZN2nn2oe25TryPopNotificationMessageEPj",{address(&mode_message)})==1 && mode_message==30,
+            "operation mode changed message");
+    require(call("_ZN2nn2oe25TryPopNotificationMessageEPj",{address(&mode_message)})==1 && mode_message==31,
+            "performance mode changed message");
+    require(!call("_ZN2nn2oe25TryPopNotificationMessageEPj",{address(&mode_message)}),
+            "mode notification queue drains");
+    ot2::set_operation_mode(0);
+    require(!call("_ZN2nn2oe25TryPopNotificationMessageEPj",{address(&mode_message)}),
+            "unchanged operation mode sends no message");
+    call("_ZN2nn2oe44SetPerformanceModeChangedNotificationEnabledEb",{0});
+    ot2::set_operation_mode(1);
+    require(call("_ZN2nn2oe25TryPopNotificationMessageEPj",{address(&mode_message)})==1 && mode_message==30,
+            "operation mode notification independent of performance subscription");
+    require(!call("_ZN2nn2oe25TryPopNotificationMessageEPj",{address(&mode_message)}),
+            "disabled performance mode notification suppressed");
+    call("_ZN2nn2oe42SetOperationModeChangedNotificationEnabledEb",{0});
+    ot2::set_operation_mode(0);
+    require(!call("_ZN2nn2oe25TryPopNotificationMessageEPj",{address(&mode_message)}),
+            "disabled operation notification suppressed");
     require(call("_ZN2nn3aoc17CountAddOnContentEv",{})==2,"only installed canonical DLC directories are reported");
     int32_t indices[4]={-1,-1,-1,-1};
     require(call("_ZN2nn3aoc16ListAddOnContentEPiii",{address(indices),0,4})==2&&indices[0]==1&&indices[1]==3&&indices[2]==-1,"ordered bounded DLC list");
