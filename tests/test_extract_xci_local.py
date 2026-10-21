@@ -117,8 +117,8 @@ class XCIExtractionTests(unittest.TestCase):
 
         def fake_hactool(binary, keys, *args):
             calls.append(args)
-            exefs_flags = [a.split("=", 1)[1] for a in args if a.startswith("--exefsdir=")]
-            romfs_flags = [a.split("=", 1)[1] for a in args if a.startswith("--romfsdir=")]
+            exefs_flags = [str(a).split("=", 1)[1] for a in args if str(a).startswith("--exefsdir=")]
+            romfs_flags = [str(a).split("=", 1)[1] for a in args if str(a).startswith("--romfsdir=")]
             if exefs_flags:
                 exefs = Path(exefs_flags[0])
                 exefs.mkdir(parents=True)
