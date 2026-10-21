@@ -21,3 +21,17 @@ jobs:
           python3 -m compileall -q s2a scripts/unpack_decrypted.py
           python3 -m unittest discover -s tests -v
           python3 switch2android.py --help
+
+  native-host-tests:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Vulkan development headers
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libvulkan-dev
+      - name: Compile and run native host contract tests
+        run: |
+          cmake -S native -B build/host -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/host --parallel 4
+          ctest --test-dir build/host --output-on-failure
