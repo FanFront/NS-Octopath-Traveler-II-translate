@@ -40,3 +40,45 @@ git switch feature/handheld-docked-fps-settings
 Check that the newly generated `package.json` reports the **same `bundle_id`** as the previously installed build before transferring **only** the new `game.apk`. The app uses content-addressed, already-imported `game.s2a` data when the bundle identity has not changed. Install the new APK **over** the existing app with the **same signing key**; do not uninstall, because that deletes app-private settings and save data. The build still creates a local `game.s2a` file, but transferring it again should not be necessary if the existing resource identity matches.
 
 If the bundle identity changes, this is no longer an APK-only update: do not assume old resources will work.
+
+
+## Faster: rebuild only `game.apk` with your existing build cache
+
+If you **already successfully built the same game** and still have `/ossdata/ot2-work/generated-assets/launch.json`, you can avoid recreating the multi-gigabyte `game.s2a`. This directly invokes the project's Gradle APK step with the previous build's content manifest.
+
+**First validate the cached assets against the installed package:**
+
+```bash
+cd /ossdata/NS-Octopath-Traveler-II-translate
+python3 - <<'PY'
+import json
+from pathlib import Path
+old = json.loads(Path('/ossdata/ot2-output/0100a3501946e000-v131072/package.json').read_text())
+cached = json.loads(Path('/ossdata/ot2-work/generated-assets/launch.json').read_text())
+assert old['bundle_id'] == cached['bundle_id'], 'Different content bundle: STOP'
+assert old['title_id'] == cached['title_id'] == '0100a3501946e000', 'Wrong game: STOP'
+assert old['embedded'] is False and cached['embedded'] is False, 'Expected external game.s2a: STOP'
+assert old['application_id'] == 'org.switch2android.g0100a3501946e000', 'Wrong application ID: STOP'
+print('Cached resources match the original installed game; APK-only rebuild is safe to attempt.')
+PY
+```
+
+**Then compile only the Android APK** (ensure `ANDROID_HOME` points to your installed SDK and Java 21 is available):
+
+```bash
+./gradlew --project-cache-dir /ossdata/ot2-work/gradle-cache \
+  :app:assembleRelease :app:lintRelease \
+  -Ps2aAssets=/ossdata/ot2-work/generated-assets \
+  -Ps2aBuildDir=/ossdata/ot2-work/android-build \
+  -Ps2aAppId=org.switch2android.g0100a3501946e000 \
+  '-Ps2aName=OCTOPATH TRAVELER II' \
+  -Ps2aVersionCode=131073
+
+mkdir -p /ossdata/ot2-output-k70-apk-only
+cp /ossdata/ot2-work/android-build/app/outputs/apk/release/app-release.apk \
+  /ossdata/ot2-output-k70-apk-only/game.apk
+```
+
+Only transfer the new `game.apk` to your phone, then **install it over the existing app without uninstalling it**. The already-imported `game.s2a` is addressed by the unchanged bundle ID; the new APK embeds the same `launch.json`. This manual APK-only directory does not contain a complete `package.json` for the Python `install` helper, so install the APK directly (or via `adb install -r`). Do not use the above cached-assets shortcut after changing game content, shader output or build ID.
+
+Back up your original signing key; if you use a different signing key Android will refuse the update and you must not uninstall just to force it.
