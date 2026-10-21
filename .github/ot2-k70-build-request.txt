@@ -1,0 +1,7 @@
+OT2 K70 APK-only build request
+Requested: 2026-10-21
+source-profile: OCTOPATH TRAVELER II 1.1.1
+mode: side_by_side
+bundle_id: 9f94b1abd6bf80bc699b07a552ac5ab1e8b8972f23aedd327920546858702c22
+total_bytes: 6710458571
+scope: host-only Android APK and checksum; no XCI, game.s2a, or private key upload
