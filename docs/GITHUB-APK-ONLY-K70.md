@@ -1,56 +1,39 @@
-# Build the K70 handheld/docked and 30/60 FPS APK with GitHub Actions
+# GitHub Actions: K70 handheld/docked and 30/60 FPS APK (new signing key)
 
-Workflow: [OT2 K70 APK-only (GitHub hosted)](../.github/workflows/build-k70-apk-only.yml).
+The workflow [OT2 K70 APK-only (GitHub hosted)](../.github/workflows/build-k70-apk-only.yml) builds on GitHub-hosted Ubuntu and uploads only `game.apk`, `game.apk.sha256`, and `INSTALL-NOTES.txt` to GitHub Actions Artifacts. No Switch game assets, XCI, prod.keys, or `game.s2a` are uploaded or downloaded by GitHub.
 
-This workflow runs on **GitHub-hosted Ubuntu 24.04**, not the Tencent Cloud server. It checks out the `feature/handheld-docked-fps-settings` branch and builds **only a signed Android APK**. It does not use or download game files, shader caches, XCI, `game.s2a`, Switch prod.keys or R2 credentials. The only outputs are `game.apk` and its checksum in GitHub Actions Artifacts.
+**An arbitrary string is not an Android signing key.** This workflow now creates a valid fresh Android signing keystore with `keytool` on each GitHub-hosted runner. It does not require the original Ubuntu keystore or any GitHub signing secret. Each run gets a different certificate, so APKs from successive runs cannot automatically update one another.
 
-## One-time setup required for an APK that updates an existing installation
+## Select installation behavior
 
-The already-installed app must be signed using the **same Android signing key**. The original `switch2android.py build-extracted` Release APK used the **local Android debug keystore** belonging to the Ubuntu account that ran Gradle (typically `~/.android/debug.keystore`). A new GitHub-hosted runner generates a *different* signing key unless you provide the original. Without the same key Android will reject an in-place update, and uninstalling the game destroys app-private saves.
+- `side_by_side` **(default)**: the new package name is `org.switch2android.ot2k70`. It can be installed alongside the original `org.switch2android.g0100a3501946e000` app, without deleting original saves or data. The two applications have **separate storage**, so the new one must separately import the matching `game.s2a`. Keep the original local ZIP file available on the phone or transfer it privately again. This can temporarily use considerable additional storage.
+- `replace_after_uninstall`: use the old package name but sign with a new key. You **must uninstall the existing APK first**, which deletes its private saves and imported game resources. Do not select this unless you have backed up important saves and are prepared to reimport `game.s2a`.
 
-From the Ubuntu account that **originally built the installed APK**, first verify that the original keystore exists:
+## Provide the two bundle metadata fields
 
-```bash
-test -s "$HOME/.android/debug.keystore" && echo "Found original signing key"
-```
-
-Back up this file privately and never commit it or paste its contents into a chat, issue, workflow log or public file. Review whether allowing your GitHub Actions workflow to access a copy of this private signing key matches your security requirements. In this public repository, avoid running untrusted code with secrets; restrict repository write access.
-
-To upload the original key **directly to GitHub's encrypted Actions Secrets** without printing its contents, on a machine with GitHub CLI installed and authenticated:
-
-```bash
-base64 -w0 "$HOME/.android/debug.keystore" |
-  gh secret set S2A_DEBUG_KEYSTORE_BASE64 \
-    --repo FanFront/NS-Octopath-Traveler-II-translate
-```
-
-Alternatively set repository secret `S2A_DEBUG_KEYSTORE_BASE64` in **Settings → Secrets and variables → Actions → New repository secret** using the base64-encoded file contents. Do not put the key into an Actions Variable or a workflow dispatch input. The workflow checks that the keystore has the default Android debug keystore alias and password and refuses to build an upgrade APK if the secret is missing.
-
-## Supply the old bundle metadata (two small values, no assets)
-
-On your Ubuntu server read the existing build's metadata:
+The APK must refer to the real game resources you own; values cannot be invented or random. On the Ubuntu server where the original APK and `game.s2a` were built, run:
 
 ```bash
 python3 - <<'PY'
-from pathlib import Path
 import json
+from pathlib import Path
 p = json.loads(Path('/ossdata/ot2-output/0100a3501946e000-v131072/package.json').read_text())
-assert p['title_id'] == '0100a3501946e000'
-assert p['embedded'] is False
+assert p['title_id'] == '0100a3501946e000' and not p['embedded']
 print('bundle_id:', p['bundle_id'])
 print('total_bytes:', p['total_bytes'])
 PY
 ```
 
-**Do not use the ZIP size of `game.s2a` for `total_bytes`**. The workflow requires the numbers from the previous `package.json`. These values identify the resource package already imported on your phone and let the APK find it without re-downloading it.
+`total_bytes` means the uncompressed total resource bytes in `package.json`, **not** the ZIP length on disk. `bundle_id` is a 64-character hash, **not** a game key or signing key.
 
-Open **Actions → OT2 K70 APK-only (GitHub hosted) → Run workflow** and enter the two values. Click **Run workflow**.
+## Run the job
 
-When successful, download artifact `ot2-k70-settings-apk-only-<run number>`, extract `game.apk`, and copy **only the APK** to your phone. The APK uses the previous bundle ID and the same signing keystore. Install as an **update**, without uninstalling the old game; existing `game.s2a` contents and saves remain in app-private storage.
+1. Open [GitHub Actions / OT2 K70 APK-only](../.github/workflows/build-k70-apk-only.yml) in the repository.
+2. Choose **Run workflow**, select the `main` branch, and enter the original `bundle_id` and `total_bytes`.
+3. Leave `installation_mode=side_by_side` to keep your original installation and its saves.
+4. On success, open the job run, download the `ot2-k70-settings-apk-only-...` Artifact, and install its `game.apk` on Android.
+5. In the new app, select the matching private `game.s2a` file when prompted. Choose handheld/docked and 30/60 FPS settings before starting the game.
 
-## Important caveats
+The workflow checks out a pinned, previously checked feature-branch commit containing the mode/FPS controls. The Android APK build and device runtime remain experimental. Docked mode only reports Switch operation/performance mode to the guest—it does not guarantee native 1080p rendering. Actual 60 FPS must be measured on the device.
 
-- This is a new APK with 30/60 FPS and handheld/docked mode UI, **not a guarantee of 1080p or 60 actual frames per second**. Docked mode may require a full game restart to have any effect.
-- The feature branch is experimental. Review/validate the generated APK on your Redmi K70 before relying on it.
-- If the original keystore is missing, the safe next step is to recover that key. **Do not create a replacement key and uninstall the old application to force installation.**
-- Because the repository is public, **do not upload game data or keys**. The GitHub Actions artifact contains only APK and checksum.
+Never publish a game resource archive or your Nintendo Switch keys. An independent new Android signing key can be used for initial installation, but securely preserve a copy if you later require in-place upgrades. This simple APK-only workflow intentionally does not preserve its generated key, so future builds must be installed as separate packages or after uninstall.
