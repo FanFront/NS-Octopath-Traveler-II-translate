@@ -139,14 +139,14 @@ jobs:
           (cd "$RUNNER_TEMP/ot2-apk-only" && sha256sum game.apk > game.apk.sha256)
           "$ANDROID_HOME/build-tools/36.0.0/apksigner" verify --print-certs "$RUNNER_TEMP/ot2-apk-only/game.apk"
           cat > "$RUNNER_TEMP/ot2-apk-only/INSTALL-NOTES.txt" <<EOF
-This APK uses a new signing key unrelated to the previous game APK.
-App ID: $APP_ID
-Game title: OCTOPATH TRAVELER II
-Mode: ${{ inputs.installation_mode }}
-The matching game.s2a must be imported again into this new installation.
-For side_by_side, the existing app and its saves remain intact.
-For replace_after_uninstall, first uninstall the previous package (deletes its saves).
-EOF
+          This APK uses a new signing key unrelated to the previous game APK.
+          App ID: $APP_ID
+          Game title: OCTOPATH TRAVELER II
+          Mode: ${{ inputs.installation_mode }}
+          The matching game.s2a must be imported again into this new installation.
+          For side_by_side, the existing app and its saves remain intact.
+          For replace_after_uninstall, first uninstall the previous package (deletes its saves).
+          EOF
 
       - name: Upload APK only (no copyrighted game resources)
         uses: actions/upload-artifact@v4
